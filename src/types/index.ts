@@ -60,10 +60,30 @@ export interface FolderSummaryCards {
   health_status: "healthy" | "warning" | "error";
 }
 
+export interface DriveInfo {
+  drive_letter: string;
+  root_path: string;
+  volume_label: string;
+  filesystem: string;
+  drive_type: string;
+  total_bytes: number;
+  free_bytes: number;
+  used_bytes: number;
+  is_available: boolean;
+  is_registered: boolean;
+  registered_folder_id?: string | null;
+}
+
 export interface ManagedFolder {
   id: string;
   name: string;
   root_path: string;
+  root_type?: "directory" | "drive";
+  volume_label?: string | null;
+  volume_serial?: string | null;
+  volume_total_bytes?: number | null;
+  volume_free_bytes?: number | null;
+  is_available?: boolean;
   is_enabled: boolean;
   monitoring_enabled: boolean;
   scan_on_startup: boolean;

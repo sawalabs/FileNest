@@ -3,6 +3,7 @@ import type {
   ChangePlanItemResponse,
   ChangePlanResponse,
   DirectoryListingResponse,
+  DriveInfo,
   ExecutionJobResponse,
   FileItemMetadata,
   FolderSummaryResponse,
@@ -192,6 +193,15 @@ export class ApiService {
     if (!response.ok) {
       const err = await response.json().catch(() => ({}));
       throw new Error(err.detail || `Failed to fetch folders: HTTP ${response.status}`);
+    }
+    return response.json();
+  }
+
+  public static async listAvailableDrives(): Promise<DriveInfo[]> {
+    const response = await fetch(`${this.baseUrl}/api/v1/folders/drives`);
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.detail || `Failed to fetch drives: HTTP ${response.status}`);
     }
     return response.json();
   }

@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from backend.app.api.deps import get_managed_folder_service
 from backend.app.schemas.managed_folder import (
+    DriveInfo,
     FolderCapabilities,
     FolderExclusionCreate,
     FolderExclusionItem,
@@ -19,6 +20,18 @@ from backend.app.services.managed_folder import (
 )
 
 router = APIRouter()
+
+
+@router.get(
+    "/drives",
+    response_model=List[DriveInfo],
+    summary="List all available host volumes / drives",
+)
+def get_available_drives(
+    service: ManagedFolderService = Depends(get_managed_folder_service),
+) -> List[DriveInfo]:
+    """Discovers host volumes and marks registration status."""
+    return service.get_available_drives()
 
 
 @router.post(

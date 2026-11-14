@@ -226,6 +226,10 @@ class FilesystemService:
             with os.scandir(target_dir) as it:
                 for entry in it:
                     entry_path = Path(entry.path)
+                    # Exclude protected system paths from directory listing (FNE-7, FNE-8)
+                    if PathValidator.is_protected_path(entry_path):
+                        continue
+
                     meta = self.get_entry_metadata(folder, entry_path, root)
 
                     if not include_hidden and meta.is_hidden:
@@ -305,15 +309,19 @@ class FilesystemService:
         category_bytes: Dict[str, int] = {cat: 0 for cat in FILE_CATEGORIES.keys()}
         category_bytes["other"] = 0
 
-        # Non-symlink walking
+        # Non-symlink walking with critical path protection
         for root_dir, dirs, files in os.walk(target_dir, followlinks=False):
-            # Exclude symlink directories in-place from being traversed
-            dirs[:] = [d for d in dirs if not is_reparse_point_or_symlink(Path(root_dir) / d)]
+            # Exclude symlinks and protected system directories in-place from being traversed
+            dirs[:] = [
+                d for d in dirs
+                if not is_reparse_point_or_symlink(Path(root_dir) / d)
+                and not PathValidator.is_protected_path(Path(root_dir) / d)
+            ]
             directory_count += len(dirs)
 
             for file_name in files:
                 file_path = Path(root_dir) / file_name
-                if is_reparse_point_or_symlink(file_path):
+                if is_reparse_point_or_symlink(file_path) or PathValidator.is_protected_path(file_path):
                     continue
 
                 try:

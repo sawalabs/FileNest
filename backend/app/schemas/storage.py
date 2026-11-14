@@ -80,6 +80,11 @@ class StorageAnalysisResult(BaseModel):
     total_storage_bytes: int = 0
     total_files_count: int = 0
     total_folders_count: int = 0
+    volume_total_bytes: Optional[int] = None
+    volume_used_bytes: Optional[int] = None
+    volume_free_bytes: Optional[int] = None
+    skipped_protected_count: int = 0
+    skipped_inaccessible_count: int = 0
     large_files_count: int = 0
     large_files_bytes: int = 0
     large_files_percentage: float = 0.0

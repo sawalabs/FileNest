@@ -19,11 +19,17 @@ class ManagedFolder(Base):
         CheckConstraint("is_enabled IN (0, 1)", name="ck_managed_folders_is_enabled"),
         CheckConstraint("monitoring_enabled IN (0, 1)", name="ck_managed_folders_monitoring_enabled"),
         CheckConstraint("scan_on_startup IN (0, 1)", name="ck_managed_folders_scan_on_startup"),
+        CheckConstraint("root_type IN ('directory', 'drive')", name="ck_managed_folders_root_type"),
+        CheckConstraint("is_available IN (0, 1)", name="ck_managed_folders_is_available"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     root_path: Mapped[str] = mapped_column(String(1024), nullable=False, unique=True)
+    root_type: Mapped[str] = mapped_column(String(32), nullable=False, default="directory")
+    volume_label: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    volume_serial: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    is_available: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     is_enabled: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     monitoring_enabled: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     scan_on_startup: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

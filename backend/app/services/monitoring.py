@@ -93,6 +93,16 @@ class FolderChangeEventHandler(FileSystemEventHandler):
             if rel_path in (".", ""):
                 return
 
+            # Critical path protection (FNE-7, FNE-10): exclude protected system paths
+            from backend.app.services.managed_folder import PathValidator
+            if PathValidator.is_protected_path(src_path):
+                return
+
+            # Exclude symlinks, junctions, and reparse points
+            from backend.app.services.filesystem import is_reparse_point_or_symlink
+            if is_reparse_point_or_symlink(src_path):
+                return
+
             # Check ignore patterns
             if self.service.should_ignore(self.folder_id, rel_path, src_path.name):
                 return
@@ -100,6 +110,8 @@ class FolderChangeEventHandler(FileSystemEventHandler):
             dst_rel: Optional[str] = None
             if dst_path_str:
                 dst_path = Path(dst_path_str).resolve()
+                if PathValidator.is_protected_path(dst_path) or is_reparse_point_or_symlink(dst_path):
+                    return
                 try:
                     dst_rel = dst_path.relative_to(self.root_path).as_posix()
                 except ValueError:
@@ -362,6 +374,26 @@ class MonitoringManagerService:
 
             root_path = Path(folder.root_path).resolve()
             if not root_path.exists() or not root_path.is_dir():
+                if getattr(folder, "root_type", "directory") == "drive":
+                    folder.is_available = 0
+                    session.commit()
+                    self._watchers[folder_id] = {
+                        "observer": None,
+                        "handler": None,
+                        "status": "disconnected",
+                        "error_message": f"Drive root is not mounted: {root_path}",
+                        "root_path": str(root_path),
+                        "recursive": False,
+                        "debounce_ms": 1000,
+                        "folder_name": folder.name,
+                    }
+                    return {
+                        "folder_id": folder_id,
+                        "folder_name": folder.name,
+                        "status": "disconnected",
+                        "root_path": str(root_path),
+                        "monitoring_enabled": True,
+                    }
                 raise MonitoringException(f"Folder root path does not exist on disk: {root_path}")
 
             # Get or create MonitoringConfig initialized with global preferences

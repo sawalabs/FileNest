@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import shutil
 import stat
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -223,6 +224,27 @@ class StorageAnalyzerService:
         total_bytes = 0
         total_files = 0
         total_folders = 0
+        skipped_protected_count = 0
+        skipped_inaccessible_count = 0
+
+        # Overlap detection (FNE-11): find registered nested folder roots
+        nested_roots: Set[Path] = set()
+        if getattr(folder, "root_type", "directory") == "drive":
+            try:
+                other_stmt = select(ManagedFolder).where(
+                    ManagedFolder.is_enabled == 1,
+                    ManagedFolder.id != folder.id,
+                )
+                others = list(self.db.execute(other_stmt).scalars().all())
+                for other in others:
+                    try:
+                        other_p = Path(other.root_path).resolve()
+                        if root_path in other_p.parents:
+                            nested_roots.add(other_p)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
 
         # Stack-based traversal to safely avoid symlinks & reparse points
         stack: List[Path] = [root_path]
@@ -242,6 +264,15 @@ class StorageAnalyzerService:
 
                         # Never follow symlinks, junctions, or reparse points
                         if is_reparse_point_or_symlink(entry_path):
+                            continue
+
+                        # Critical path protection (FNE-7, FNE-8)
+                        if PathValidator.is_protected_path(entry_path):
+                            skipped_protected_count += 1
+                            continue
+
+                        # Overlapping nested folders (FNE-11): skip nested managed folder roots
+                        if nested_roots and entry_path.resolve() in nested_roots:
                             continue
 
                         sub_items_count += 1
@@ -549,6 +580,18 @@ class StorageAnalyzerService:
         except Exception as e:
             logger.warning("Failed to bulk sync scan results for folder %s into FileRecord: %s", folder.id, e)
 
+        vol_total = None
+        vol_used = None
+        vol_free = None
+        if getattr(folder, "root_type", "directory") == "drive" and os.path.exists(folder.root_path):
+            try:
+                du = shutil.disk_usage(folder.root_path)
+                vol_total = du.total
+                vol_used = du.used
+                vol_free = du.free
+            except Exception:
+                pass
+
         return StorageAnalysisResult(
             managed_folder_id=folder.id,
             managed_folder_name=folder.name,
@@ -556,6 +599,11 @@ class StorageAnalyzerService:
             total_storage_bytes=total_bytes,
             total_files_count=total_files,
             total_folders_count=total_folders,
+            volume_total_bytes=vol_total,
+            volume_used_bytes=vol_used,
+            volume_free_bytes=vol_free,
+            skipped_protected_count=skipped_protected_count,
+            skipped_inaccessible_count=skipped_inaccessible_count,
             large_files_count=len(large_files),
             large_files_bytes=large_files_bytes,
             large_files_percentage=large_files_pct,

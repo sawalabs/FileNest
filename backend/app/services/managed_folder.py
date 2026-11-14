@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 import stat
 import tempfile
 import uuid
@@ -18,6 +19,7 @@ from backend.app.db.models.organization import OrganizationRule
 from backend.app.db.repositories.audit import AuditLogRepository
 from backend.app.db.repositories.file import FileRepository
 from backend.app.schemas.managed_folder import (
+    DriveInfo,
     FolderCapabilities,
     FolderExclusionCreate,
     FolderExclusionItem,
@@ -27,6 +29,13 @@ from backend.app.schemas.managed_folder import (
     ManagedFolderCreate,
     ManagedFolderResponse,
     ManagedFolderUpdate,
+)
+from backend.app.services.drive_service import (
+    get_drive_type_name,
+    get_volume_identity,
+    is_drive_root_path,
+    list_available_drives,
+    normalize_drive_root,
 )
 
 
@@ -90,34 +99,77 @@ def is_windows_reserved_name(name: str) -> bool:
     return base in WINDOWS_RESERVED_NAMES
 
 
-class PathValidator:
-    """Validates canonical paths, protected Windows paths, and scope confinement."""
+class ProtectedPathRegistry:
+    """Central registry and policy engine for protecting critical OS and application paths."""
 
-    @staticmethod
-    def is_reserved_name(name: str) -> bool:
-        return is_windows_reserved_name(name)
+    _SYSTEM_ROOT_FOLDERS = {
+        "system volume information",
+        "$recycle.bin",
+        "recycler",
+        "recovery",
+        "boot",
+        "efi",
+    }
 
-    @staticmethod
-    def get_protected_paths() -> List[Path]:
+    _SYSTEM_ROOT_FILES = {
+        "pagefile.sys",
+        "swapfile.sys",
+        "hiberfil.sys",
+        "dumpstack.log",
+        "dumpstack.log.tmp",
+        "bootmgr",
+        "bootnxt",
+    }
+
+    @classmethod
+    def get_protected_paths(cls) -> List[Path]:
         protected: List[Path] = []
         # Windows system directories
         windir = os.environ.get("WINDIR") or os.environ.get("SystemRoot")
         if windir:
-            protected.append(Path(windir).resolve())
+            try:
+                protected.append(Path(windir).resolve())
+            except Exception:
+                pass
 
         prog_files = os.environ.get("ProgramFiles")
         if prog_files:
-            protected.append(Path(prog_files).resolve())
+            try:
+                protected.append(Path(prog_files).resolve())
+            except Exception:
+                pass
 
         prog_files_x86 = os.environ.get("ProgramFiles(x86)")
         if prog_files_x86:
-            protected.append(Path(prog_files_x86).resolve())
+            try:
+                protected.append(Path(prog_files_x86).resolve())
+            except Exception:
+                pass
+
+        prog_w6432 = os.environ.get("ProgramW6432")
+        if prog_w6432:
+            try:
+                protected.append(Path(prog_w6432).resolve())
+            except Exception:
+                pass
+
+        prog_data = os.environ.get("ProgramData") or os.environ.get("ALLUSERSPROFILE")
+        if prog_data:
+            try:
+                protected.append(Path(prog_data).resolve())
+            except Exception:
+                pass
 
         # Common Windows drive roots like C:\Windows
-        for common in ["C:\\Windows", "C:\\Program Files", "C:\\Program Files (x86)"]:
+        for common in ["C:\\Windows", "C:\\Program Files", "C:\\Program Files (x86)", "C:\\ProgramData"]:
             p = Path(common)
             if p.exists():
-                protected.append(p.resolve())
+                try:
+                    p_res = p.resolve()
+                    if p_res not in protected:
+                        protected.append(p_res)
+                except Exception:
+                    pass
 
         # Application self-protection directories
         try:
@@ -154,18 +206,166 @@ class PathValidator:
         return protected
 
     @classmethod
-    def validate_new_root_path(cls, raw_path: str, existing_folders: List[ManagedFolder]) -> Path:
+    def is_protected_path(cls, path: Any) -> bool:
+        """Determines whether a canonical or raw path points to a protected system or application location."""
+        if not path:
+            return False
+        try:
+            str_path = str(path).strip()
+            clean_str = str_path.replace("/", "\\")
+            # If path is an entire drive root (e.g. C:\), it is the container, not a protected descendant
+            if is_drive_root_path(clean_str):
+                return False
+
+            norm = os.path.normcase(os.path.abspath(clean_str))
+            p = Path(norm)
+
+            # Check if matches any registered protected paths or their descendants
+            for prot in cls.get_protected_paths():
+                prot_norm = os.path.normcase(str(prot))
+                if norm == prot_norm or norm.startswith(prot_norm + "\\"):
+                    return True
+
+            # Check root-level system folders and files on any volume
+            parts = p.parts
+            if len(parts) > 1:
+                first_dir = parts[1].lower().rstrip("\\")
+                if first_dir in cls._SYSTEM_ROOT_FOLDERS:
+                    return True
+
+            if len(parts) == 2 and p.name.lower() in cls._SYSTEM_ROOT_FILES:
+                return True
+
+            # Check any segment matching critical system folders
+            for part in parts:
+                p_lower = part.lower().rstrip("\\")
+                if p_lower in cls._SYSTEM_ROOT_FOLDERS:
+                    return True
+                if p_lower in cls._SYSTEM_ROOT_FILES:
+                    return True
+
+            return False
+        except Exception:
+            return True
+
+    @classmethod
+    def deny_if_protected(cls, path: Any, operation: str = "access") -> None:
+        if cls.is_protected_path(path):
+            raise ManagedFolderException(f"Operation '{operation}' denied: '{path}' is a protected system or application path")
+
+    is_protected = is_protected_path
+
+
+def check_folder_overlap(path: Path, existing_folders: List[ManagedFolder]) -> List[Dict[str, Any]]:
+    """Identifies overlapping relationships between a proposed path and existing managed folders."""
+    overlaps = []
+    canonical = path.resolve()
+    for existing in existing_folders:
+        try:
+            existing_path = Path(existing.root_path).resolve()
+            if existing_path == canonical:
+                overlaps.append({
+                    "type": "exact",
+                    "folder_id": existing.id,
+                    "folder_name": existing.name,
+                    "root_path": existing.root_path,
+                })
+            elif existing_path in canonical.parents:
+                overlaps.append({
+                    "type": "child_of_existing",
+                    "folder_id": existing.id,
+                    "folder_name": existing.name,
+                    "root_path": existing.root_path,
+                })
+            elif canonical in existing_path.parents:
+                overlaps.append({
+                    "type": "parent_of_existing",
+                    "folder_id": existing.id,
+                    "folder_name": existing.name,
+                    "root_path": existing.root_path,
+                })
+        except Exception:
+            pass
+    return overlaps
+
+
+class PathValidator:
+    """Validates canonical paths, protected Windows paths, and scope confinement."""
+
+    @staticmethod
+    def is_reserved_name(name: str) -> bool:
+        return is_windows_reserved_name(name)
+
+    @staticmethod
+    def is_drive_root(raw: str) -> bool:
+        return is_drive_root_path(raw)
+
+    @classmethod
+    def get_protected_paths(cls) -> List[Path]:
+        return ProtectedPathRegistry.get_protected_paths()
+
+    @classmethod
+    def is_protected_path(cls, path: Any) -> bool:
+        return ProtectedPathRegistry.is_protected_path(path)
+
+    is_protected = is_protected_path
+
+    @classmethod
+    def deny_if_protected(cls, path: Any, operation: str = "access") -> None:
+        ProtectedPathRegistry.deny_if_protected(path, operation)
+
+    @classmethod
+    def validate_new_root_path(
+        cls,
+        raw_path: str,
+        existing_folders: List[ManagedFolder],
+        root_type: str = "directory",
+    ) -> Path:
         """Validates that a proposed root path is canonical, exists, safe, and non-overlapping."""
         try:
             raw_p = Path(raw_path).expanduser()
             if raw_p.is_symlink() or os.path.islink(raw_path):
                 raise ManagedFolderException(f"Symbolic links are not permitted as Managed Folders: {raw_path}")
-
-            path = raw_p.resolve()
         except ManagedFolderException:
             raise
         except Exception as e:
             raise ManagedFolderException(f"Invalid path syntax: {e}")
+
+        # Reject Alternate Data Streams (ADS)
+        raw_drive = Path(raw_path).drive if raw_path else ""
+        raw_rest = str(raw_path)[len(raw_drive):] if raw_path else ""
+        if ":" in raw_rest:
+            raise ManagedFolderException("Alternate Data Streams (':') are not permitted in folder paths")
+
+        # DRIVE ROOT REGISTRATION (FNE-5, FNE-6, FNE-7)
+        if root_type == "drive":
+            norm_str = normalize_drive_root(raw_path)
+            try:
+                path = Path(norm_str).resolve()
+            except Exception as e:
+                raise ManagedFolderException(f"Invalid drive path: {e}")
+
+            if not path.exists():
+                raise ManagedFolderException(f"Drive root does not exist or is not mounted: {norm_str}")
+            if not path.is_dir():
+                raise ManagedFolderException(f"Drive root is not a directory: {norm_str}")
+            if not is_drive_root_path(norm_str):
+                raise ManagedFolderException(f"Path is not a valid drive root: '{raw_path}'")
+            if cls.is_protected_path(path):
+                raise ManagedFolderException(f"Drive root targets a protected system directory: {path}")
+
+            # Check duplicate and overlap with existing registered folders
+            for existing in existing_folders:
+                existing_path = Path(existing.root_path).resolve()
+                if path == existing_path:
+                    raise ManagedFolderException(f"Drive root is already registered: {path}")
+                if path in existing_path.parents:
+                    raise ManagedFolderException(f"Drive root contains already registered folder '{existing.name}': {existing_path}")
+
+            return path
+
+        # DIRECTORY REGISTRATION
+        path = raw_p.resolve()
 
         # 1. Existence and directory check
         if not path.exists():
@@ -177,17 +377,9 @@ class PathValidator:
         if path.is_symlink() or os.path.islink(str(path)):
             raise ManagedFolderException(f"Symbolic links are not permitted as Managed Folders: {path}")
 
-        # 3. Reject drive roots directly (e.g. C:\, D:\)
+        # 3. Reject drive roots directly when registering as directory
         if len(path.parts) <= 1 or path == path.parent:
-            raise ManagedFolderException(f"Registering an entire drive root is not permitted: {path}")
-
-        # Reject Alternate Data Streams (ADS)
-        drive = path.drive
-        rest = str(path)[len(drive):]
-        raw_drive = Path(raw_path).drive if raw_path else ""
-        raw_rest = str(raw_path)[len(raw_drive):] if raw_path else ""
-        if ":" in rest or ":" in raw_rest:
-            raise ManagedFolderException("Alternate Data Streams (':') are not permitted in folder paths")
+            raise ManagedFolderException(f"Registering an entire drive root is not permitted as a directory. Use drive root registration: {path}")
 
         # Reject Windows/DOS reserved device names in path segments
         for part in path.parts[1:]:
@@ -200,6 +392,9 @@ class PathValidator:
             if path == protected or protected in path.parents or path in protected.parents:
                 raise ManagedFolderException(f"Path is inside or contains a protected system or application directory: {path}")
 
+        if cls.is_protected_path(path):
+            raise ManagedFolderException(f"Path is a protected system directory: {path}")
+
         # Special folder checks (Recycle bin, system volume)
         path_str_lower = str(path).lower()
         if "$recycle.bin" in path_str_lower or "system volume information" in path_str_lower:
@@ -211,7 +406,7 @@ class PathValidator:
             if path == existing_path:
                 raise ManagedFolderException(f"Folder is already registered: {path}")
             if existing_path in path.parents:
-                raise ManagedFolderException(f"Path is nested inside already registered folder '{existing.name}': {existing_path}")
+                raise ManagedFolderException(f"Path is nested inside already registered folder or drive root '{existing.name}': {existing_path}")
             if path in existing_path.parents:
                 raise ManagedFolderException(f"Path contains already registered folder '{existing.name}': {existing_path}")
 
@@ -219,7 +414,7 @@ class PathValidator:
 
     @staticmethod
     def resolve_and_verify_scope(folder: ManagedFolder, relative_path: str) -> Path:
-        """Confines a relative path strictly within the Managed Folder root."""
+        """Confines a relative path strictly within the Managed Folder root and blocks protected system paths."""
         if not folder.is_enabled:
             raise ManagedFolderException(f"Managed Folder '{folder.name}' is currently disabled")
 
@@ -260,6 +455,10 @@ class PathValidator:
         if target != root and root not in target.parents:
             raise ManagedFolderException(f"Access violation: path '{relative_path}' escapes Managed Folder root '{root}'")
 
+        # CRITICAL PATH PROTECTION ENFORCEMENT (FNE-7)
+        if ProtectedPathRegistry.is_protected_path(target):
+            raise ManagedFolderException(f"Access violation: path '{relative_path}' is inside a protected system or application location")
+
         return target
 
 
@@ -273,13 +472,35 @@ class ManagedFolderService:
         stmt = select(ManagedFolder)
         existing_folders = list(self.db.execute(stmt).scalars().all())
 
+        root_type = getattr(payload, "root_type", "directory") or "directory"
         # Canonical path validation
-        canonical_path = PathValidator.validate_new_root_path(payload.root_path, existing_folders)
+        canonical_path = PathValidator.validate_new_root_path(
+            payload.root_path,
+            existing_folders,
+            root_type=root_type,
+        )
         canonical_path_str = str(canonical_path)
+
+        vol_label = getattr(payload, "volume_label", None)
+        vol_serial = None
+        if root_type == "drive":
+            ident = get_volume_identity(canonical_path_str)
+            drive_letter = canonical_path_str[:2].upper()
+            dtype = get_drive_type_name(canonical_path_str)
+            default_label = f"Local Disk ({drive_letter})" if dtype == "fixed" else f"Drive ({drive_letter})"
+            vol_label = vol_label or ident.get("volume_label") or default_label
+            vol_serial = ident.get("volume_serial")
+            if not payload.name or payload.name == "Managed Folder":
+                payload.name = default_label
+
 
         folder = ManagedFolder(
             name=payload.name.strip(),
             root_path=canonical_path_str,
+            root_type=root_type,
+            volume_label=vol_label,
+            volume_serial=vol_serial,
+            is_available=1,
             monitoring_enabled=1 if payload.monitoring_enabled else 0,
             scan_on_startup=1 if payload.scan_on_startup else 0,
             exclude_patterns_json=json.dumps(payload.exclude_patterns or []),
@@ -299,9 +520,9 @@ class ManagedFolderService:
             action="folder_registered",
             entity_type="managed_folder",
             entity_id=folder.id,
-            details={"name": folder.name, "root_path": folder.root_path},
+            details={"name": folder.name, "root_path": folder.root_path, "root_type": root_type},
         )
-        logger.info("Successfully registered Managed Folder '%s' at %s", folder.name, folder.root_path)
+        logger.info("Successfully registered Managed Folder '%s' at %s (root_type=%s)", folder.name, folder.root_path, root_type)
         return folder
 
     def list_folders(self, only_enabled: bool = False) -> List[ManagedFolder]:
@@ -546,9 +767,31 @@ class ManagedFolderService:
 
         overall_status = "healthy"
         last_error = None
+
+        # Check drive availability and volume serial validation (FNE-12)
+        is_drive = getattr(folder, "root_type", "directory") == "drive"
+        if is_drive:
+            if not exists:
+                overall_status = "inaccessible"
+                last_error = "Drive is disconnected or unmounted"
+                folder.is_available = 0
+                self.db.commit()
+            else:
+                ident = get_volume_identity(folder.root_path)
+                expected_serial = getattr(folder, "volume_serial", None)
+                actual_serial = ident.get("volume_serial")
+                if expected_serial and actual_serial and expected_serial.upper() != actual_serial.upper():
+                    overall_status = "error"
+                    last_error = f"Volume serial mismatch: expected {expected_serial}, found {actual_serial}"
+                    folder.is_available = 0
+                    self.db.commit()
+                else:
+                    folder.is_available = 1
+                    self.db.commit()
+
         if not exists:
             overall_status = "inaccessible"
-            last_error = "Directory does not exist on disk"
+            last_error = last_error or "Directory does not exist on disk"
         elif not can_read:
             overall_status = "error"
             last_error = "Read permission denied"
@@ -559,13 +802,13 @@ class ManagedFolderService:
             overall_status = "warning"
             last_error = "Directory is read-only"
 
-        watcher_status = "active" if folder.monitoring_enabled and folder.is_enabled else ("paused" if folder.monitoring_enabled else "stopped")
+        watcher_status = "active" if folder.monitoring_enabled and folder.is_enabled and getattr(folder, "is_available", 1) else ("paused" if folder.monitoring_enabled else "stopped")
 
         return FolderHealthCheck(
             folder_id=folder.id,
             folder_name=folder.name,
             root_path=folder.root_path,
-            is_accessible=exists and can_read,
+            is_accessible=exists and can_read and bool(getattr(folder, "is_available", 1)),
             exists=exists,
             can_read=can_read,
             can_write=can_write,
@@ -640,16 +883,34 @@ class ManagedFolderService:
             health_status=health_status,
         )
 
+    def get_available_drives(self) -> List[DriveInfo]:
+        """Discovers host volumes and marks registration status."""
+        return list_available_drives(db=self.db)
+
     def build_folder_response(self, folder: ManagedFolder) -> ManagedFolderResponse:
         caps = self.get_folder_capabilities(folder.id)
         usage = self.get_folder_usage(folder.id)
         health = self.check_folder_health(folder.id)
+
+        # Distinguish actual volume capacity from indexed totals (FNE-8)
+        vol_total = None
+        vol_free = None
+        if getattr(folder, "root_type", "directory") == "drive" and os.path.exists(folder.root_path):
+            try:
+                du = shutil.disk_usage(folder.root_path)
+                vol_total = du.total
+                vol_free = du.free
+            except Exception:
+                pass
+
         return ManagedFolderResponse.from_orm_model(
             folder,
             capabilities=caps,
             size=usage.total_size_bytes,
             files_count=usage.total_files_count,
             health=health.overall_status,
+            volume_total_bytes=vol_total,
+            volume_free_bytes=vol_free,
         )
 
     def reconcile_folder(self, folder_id: str) -> Dict[str, Any]:

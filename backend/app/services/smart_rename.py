@@ -101,7 +101,7 @@ class SmartRenameService:
 
             for dirpath, dirnames, filenames in os.walk(target_dir):
                 dpath = Path(dirpath)
-                if is_reparse_point_or_symlink(dpath):
+                if is_reparse_point_or_symlink(dpath) or PathValidator.is_protected_path(dpath):
                     dirnames.clear()
                     continue
 
@@ -130,7 +130,7 @@ class SmartRenameService:
                     if fn.startswith("."):
                         continue
                     fpath = dpath / fn
-                    if is_reparse_point_or_symlink(fpath):
+                    if is_reparse_point_or_symlink(fpath) or PathValidator.is_protected_path(fpath):
                         continue
 
                     try:

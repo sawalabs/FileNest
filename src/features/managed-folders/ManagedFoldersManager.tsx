@@ -74,6 +74,9 @@ export const ManagedFoldersManager: React.FC = () => {
 
   // Add folder modal state
   const [isRegistering, setIsRegistering] = useState(false);
+  const [registrationMode, setRegistrationMode] = useState<"directory" | "drive">("directory");
+  const [availableDrives, setAvailableDrives] = useState<import("@/types").DriveInfo[]>([]);
+  const [loadingDrives, setLoadingDrives] = useState(false);
   const [folderPath, setFolderPath] = useState("");
   const [folderName, setFolderName] = useState("");
   const [monitoringEnabled, setMonitoringEnabled] = useState(false);
@@ -86,6 +89,18 @@ export const ManagedFoldersManager: React.FC = () => {
     analysis: true,
     content_extraction: false,
   });
+
+  const fetchDrives = async () => {
+    setLoadingDrives(true);
+    try {
+      const drives = await ApiService.listAvailableDrives();
+      setAvailableDrives(drives);
+    } catch {
+      // ignore
+    } finally {
+      setLoadingDrives(false);
+    }
+  };
 
   // Action messages
   const [actionFeedback, setActionFeedback] = useState<{
@@ -188,7 +203,11 @@ export const ManagedFoldersManager: React.FC = () => {
     if (!folderPath.trim()) return;
 
     try {
-      const name = folderName.trim() || folderPath.split(/[\\/]/).filter(Boolean).pop() || "Folder";
+      const name =
+        folderName.trim() ||
+        (registrationMode === "drive"
+          ? `Drive (${folderPath.replace(/[/\\]/g, "").slice(0, 2).toUpperCase()})`
+          : folderPath.split(/[\\/]/).filter(Boolean).pop() || "Folder");
       const excludePatterns = exclusionsInput
         .split(",")
         .map((p) => p.trim())
@@ -197,10 +216,11 @@ export const ManagedFoldersManager: React.FC = () => {
       const created = await ApiService.registerFolder({
         name,
         root_path: folderPath.trim(),
+        root_type: registrationMode,
         monitoring_enabled: monitoringEnabled,
         scan_on_startup: scanOnStartup,
         exclude_patterns: excludePatterns,
-      });
+      } as any);
 
       // Update capabilities
       await ApiService.updateFolderCapabilities(created.id, {
@@ -636,7 +656,24 @@ export const ManagedFoldersManager: React.FC = () => {
                             {idx + 1}
                           </td>
                           <td className="py-2.5 px-3.5">
-                            <div className="font-medium text-foreground">{f.name}</div>
+                            <div className="flex items-center gap-1.5 font-medium text-foreground">
+                              {f.root_type === "drive" ? (
+                                <HardDrive size={14} className="text-primary shrink-0" />
+                              ) : (
+                                <Folder size={14} className="text-primary shrink-0" />
+                              )}
+                              <span>{f.name}</span>
+                              {f.root_type === "drive" && (
+                                <span className="px-1.5 py-0.2 rounded text-[10px] bg-primary/10 text-primary font-medium">
+                                  Drive
+                                </span>
+                              )}
+                              {f.is_available === false && (
+                                <span className="px-1.5 py-0.2 rounded text-[10px] bg-destructive/10 text-destructive font-medium">
+                                  Offline
+                                </span>
+                              )}
+                            </div>
                             <div
                               className="font-mono text-[11px] text-muted-foreground truncate max-w-xs mt-0.5"
                               title={f.root_path}
@@ -1264,27 +1301,150 @@ export const ManagedFoldersManager: React.FC = () => {
               </button>
             </div>
 
+            {/* Mode Switcher */}
+            <div className="flex border border-border rounded-lg p-1 bg-muted/30">
+              <button
+                type="button"
+                onClick={() => setRegistrationMode("directory")}
+                className={cn(
+                  "flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-md font-medium text-xs transition-colors",
+                  registrationMode === "directory"
+                    ? "bg-background text-foreground shadow-xs font-semibold"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                <Folder size={14} />
+                <span>Directory Folder</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setRegistrationMode("drive");
+                  fetchDrives();
+                }}
+                className={cn(
+                  "flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-md font-medium text-xs transition-colors",
+                  registrationMode === "drive"
+                    ? "bg-background text-foreground shadow-xs font-semibold"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                <HardDrive size={14} />
+                <span>Entire Drive Root</span>
+              </button>
+            </div>
+
             <form onSubmit={handleRegisterSubmit} className="space-y-4 text-xs">
-              <div className="space-y-1.5">
-                <label className="font-medium text-foreground">Directory Canonical Path</label>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="text"
-                    required
-                    value={folderPath}
-                    onChange={(e) => setFolderPath(e.target.value)}
-                    placeholder="e.g. C:\Users\Username\Documents\Work"
-                    className="flex-1 px-3 py-1.5 rounded-md border border-border bg-background font-mono text-xs focus:outline-none focus:ring-1 focus:ring-primary"
-                  />
-                  <button
-                    type="button"
-                    onClick={handlePickNativeFolder}
-                    className="px-2.5 py-1.5 rounded-md border border-border bg-secondary hover:bg-secondary/80 font-medium"
-                  >
-                    Browse
-                  </button>
+              {registrationMode === "drive" ? (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="font-medium text-foreground">Select Host Volume / Drive</label>
+                    <button
+                      type="button"
+                      onClick={fetchDrives}
+                      className="text-[11px] text-primary hover:underline flex items-center gap-1"
+                    >
+                      <RefreshCw size={11} className={loadingDrives ? "animate-spin" : ""} />
+                      <span>Refresh</span>
+                    </button>
+                  </div>
+                  {availableDrives.length === 0 ? (
+                    <div className="p-3 text-center text-muted-foreground border border-dashed border-border rounded-md">
+                      {loadingDrives ? "Detecting mounted drives..." : "No available drives detected."}
+                    </div>
+                  ) : (
+                    <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                      {availableDrives.map((d) => {
+                        const isSelected =
+                          folderPath.trim().toUpperCase() === d.root_path.trim().toUpperCase();
+                        return (
+                          <div
+                            key={d.drive_letter}
+                            onClick={() => {
+                              if (!d.is_registered) {
+                                setFolderPath(d.root_path);
+                                setFolderName(
+                                  d.volume_label
+                                    ? `${d.volume_label} (${d.drive_letter})`
+                                    : `Drive (${d.drive_letter})`
+                                );
+                              }
+                            }}
+                            className={cn(
+                              "p-2.5 rounded-lg border text-xs flex items-center justify-between transition-colors",
+                              d.is_registered
+                                ? "opacity-50 cursor-not-allowed bg-muted/20 border-border"
+                                : isSelected
+                                ? "border-primary bg-primary/10 cursor-pointer"
+                                : "border-border hover:bg-muted/40 cursor-pointer"
+                            )}
+                          >
+                            <div className="flex items-center gap-2.5">
+                              <HardDrive
+                                size={18}
+                                className={isSelected ? "text-primary" : "text-muted-foreground"}
+                              />
+                              <div>
+                                <div className="font-semibold text-foreground flex items-center gap-1.5">
+                                  <span>{d.volume_label || d.drive_letter}</span>
+                                  <span className="text-[10px] px-1.5 py-0.2 rounded bg-muted text-muted-foreground uppercase">
+                                    {d.filesystem}
+                                  </span>
+                                </div>
+                                <div className="text-[11px] text-muted-foreground">
+                                  {d.free_bytes
+                                    ? `${formatBytes(d.free_bytes)} free of ${formatBytes(d.total_bytes)}`
+                                    : d.root_path}
+                                </div>
+                              </div>
+                            </div>
+                            {d.is_registered ? (
+                              <span className="text-[10px] px-2 py-0.5 rounded-full bg-secondary text-secondary-foreground font-medium">
+                                Already Registered
+                              </span>
+                            ) : (
+                              <input
+                                type="radio"
+                                name="selectedDriveRadio"
+                                checked={isSelected}
+                                onChange={() => {}}
+                                className="text-primary"
+                              />
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                  <div className="p-2 rounded bg-muted/40 border border-border text-[11px] text-muted-foreground flex items-start gap-1.5">
+                    <ShieldAlert size={14} className="text-primary shrink-0 mt-0.5" />
+                    <span>
+                      Protected system paths (Windows, Program Files, System Volume Information, $Recycle.Bin) are automatically excluded and protected from all mutations.
+                    </span>
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <div className="space-y-1.5">
+                  <label className="font-medium text-foreground">Directory Canonical Path</label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      required
+                      value={folderPath}
+                      onChange={(e) => setFolderPath(e.target.value)}
+                      placeholder="e.g. C:\Users\Username\Documents\Work"
+                      className="flex-1 px-3 py-1.5 rounded-md border border-border bg-background font-mono text-xs focus:outline-none focus:ring-1 focus:ring-primary"
+                    />
+                    <button
+                      type="button"
+                      onClick={handlePickNativeFolder}
+                      className="px-2.5 py-1.5 rounded-md border border-border bg-secondary hover:bg-secondary/80 font-medium"
+                    >
+                      Browse
+                    </button>
+                  </div>
+                </div>
+              )}
 
               <div className="space-y-1.5">
                 <label className="font-medium text-foreground">Display Name</label>
