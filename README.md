@@ -257,9 +257,7 @@ For detailed operational, database backup, and deployment procedures, see [docs/
 
 If you find **FileNest** helpful and would like to support its continued development:
 
-[![Support on Trakteer](https://img.shields.io/badge/Trakteer-Support%20Creator-be1e2d?style=for-the-badge&logo=ko-fi&logoColor=white)](https://trakteer.id/iman_fauzi9)
-
-- Trakteer: [https://trakteer.id/iman_fauzi9](https://trakteer.id/iman_fauzi9)
+<a href="https://trakteer.id/iman_fauzi9"><img src="https://cdn.trakteer.id/images/embed/trbtn-red-1.png" height="40" alt="Trakteer" /></a>
 
 ---
 
