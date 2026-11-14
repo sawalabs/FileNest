@@ -8,6 +8,7 @@ import {
   CheckCircle2,
   AlertCircle,
   ArrowRight,
+  RefreshCw,
   X,
 } from "lucide-react";
 import { ApiService } from "@/services/api";
@@ -17,7 +18,9 @@ import type {
   SmartRenamePlanRequest,
   SmartRenamePlanResult,
   ChangePlanResponse,
+  RuleExecutionResponse,
 } from "@/types";
+import { OrganizationRulesPanel } from "@/features/organization/OrganizationRulesPanel";
 import { SmartRenameConfigPanel } from "./SmartRenameConfigPanel";
 import { SmartRenameSummaryCards } from "./SmartRenameSummaryCards";
 import { SmartRenamePreviewTable } from "./SmartRenamePreviewTable";
@@ -40,6 +43,8 @@ export const SmartRenameManager: React.FC<SmartRenameManagerProps> = ({
   const [configResetKey, setConfigResetKey] = useState(0);
   const [planResult, setPlanResult] = useState<SmartRenamePlanResult | null>(null);
   const [existingPlans, setExistingPlans] = useState<ChangePlanResponse[]>([]);
+  const [ruleExecutions, setRuleExecutions] = useState<RuleExecutionResponse[]>([]);
+  const [isHistoryLoading, setIsHistoryLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
@@ -54,11 +59,27 @@ export const SmartRenameManager: React.FC<SmartRenameManagerProps> = ({
       .catch((err) => console.error("Failed to load folders:", err));
   }, []);
 
+  const loadHistoryTab = () => {
+    setIsHistoryLoading(true);
+    Promise.all([
+      ApiService.listPlans(undefined, undefined),
+      ApiService.listRuleExecutions(undefined, 50),
+    ])
+      .then(([plans, execs]) => {
+        setExistingPlans(plans.filter((p) => p.plan_type === "rename"));
+        setRuleExecutions(execs);
+      })
+      .catch((err) => console.error("Failed to load rename history:", err))
+      .finally(() => setIsHistoryLoading(false));
+  };
+
   useEffect(() => {
     if (activeTab === "review") {
       ApiService.listPlans(undefined, undefined)
         .then((plans) => setExistingPlans(plans.filter((p) => p.plan_type === "rename")))
         .catch((err) => console.error("Failed to load plans:", err));
+    } else if (activeTab === "history") {
+      loadHistoryTab();
     }
   }, [activeTab]);
 
@@ -404,23 +425,101 @@ export const SmartRenameManager: React.FC<SmartRenameManagerProps> = ({
 
       {/* Tab: Rename Rules */}
       {activeTab === "rules" && (
-        <div className="p-12 text-center border border-border rounded-xl bg-card shadow-sm space-y-2">
-          <ShieldCheck size={32} className="mx-auto text-primary/60" />
-          <h4 className="font-semibold text-sm text-foreground">Approved Rename Rules</h4>
-          <p className="text-xs text-muted-foreground max-w-md mx-auto">
-            Configured naming conventions that can run automatically on newly added files when monitoring is active.
-          </p>
-        </div>
+        <OrganizationRulesPanel
+          folders={folders}
+          selectedFolderId={selectedFolderId || undefined}
+        />
       )}
 
       {/* Tab: History */}
       {activeTab === "history" && (
-        <div className="p-12 text-center border border-border rounded-xl bg-card shadow-sm space-y-2">
-          <History size={32} className="mx-auto text-muted-foreground/60" />
-          <h4 className="font-semibold text-sm text-foreground">Execution History</h4>
-          <p className="text-xs text-muted-foreground max-w-md mx-auto">
-            Audit logs and transactional history of executed rename operations.
-          </p>
+        <div className="space-y-4">
+          <div className="flex items-center justify-between p-4 rounded-xl border border-border bg-card shadow-sm">
+            <div>
+              <h4 className="font-semibold text-sm text-foreground flex items-center gap-2">
+                <History size={16} className="text-primary" />
+                <span>Smart Rename & Rule Execution History</span>
+              </h4>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Completed or rolled-back rename plans and automated rule evaluations.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={loadHistoryTab}
+              disabled={isHistoryLoading}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border bg-background hover:bg-muted text-xs font-medium transition-colors"
+            >
+              <RefreshCw size={13} className={isHistoryLoading ? "animate-spin" : ""} />
+              <span>Refresh</span>
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {/* Executed Rename Plans */}
+            <div className="rounded-xl border border-border bg-card shadow-sm overflow-hidden">
+              <div className="px-4 py-3 border-b border-border bg-muted/30">
+                <h5 className="text-xs font-semibold text-foreground">
+                  Executed Rename Plans
+                </h5>
+              </div>
+              {existingPlans.filter((p) => p.status !== "draft").length === 0 ? (
+                <div className="p-8 text-center text-xs text-muted-foreground">
+                  No executed rename plans yet.
+                </div>
+              ) : (
+                <div className="divide-y divide-border">
+                  {existingPlans
+                    .filter((p) => p.status !== "draft")
+                    .map((plan) => (
+                      <div key={plan.id} className="p-3.5 text-xs flex items-center justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="font-semibold text-foreground truncate">{plan.title}</p>
+                          <p className="text-[11px] text-muted-foreground">
+                            {plan.items?.length || 0} operations · Updated {formatDate(plan.updated_at || plan.created_at)}
+                          </p>
+                        </div>
+                        <span className="px-2 py-0.5 rounded bg-secondary text-secondary-foreground font-medium capitalize text-[11px] shrink-0">
+                          {plan.status.replace("_", " ")}
+                        </span>
+                      </div>
+                    ))}
+                </div>
+              )}
+            </div>
+
+            {/* Automated Rule Evaluation Logs */}
+            <div className="rounded-xl border border-border bg-card shadow-sm overflow-hidden">
+              <div className="px-4 py-3 border-b border-border bg-muted/30">
+                <h5 className="text-xs font-semibold text-foreground">
+                  Automated Rule Evaluation History
+                </h5>
+              </div>
+              {ruleExecutions.length === 0 ? (
+                <div className="p-8 text-center text-xs text-muted-foreground">
+                  No automated rule executions recorded yet.
+                </div>
+              ) : (
+                <div className="divide-y divide-border">
+                  {ruleExecutions.map((exec) => (
+                    <div key={exec.id} className="p-3.5 text-xs flex items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="font-mono text-[11px] text-foreground truncate">
+                          Rule {exec.organization_rule_id.slice(0, 8)} (v{exec.rule_version})
+                        </p>
+                        <p className="text-[11px] text-muted-foreground truncate">
+                          {exec.reason || "Evaluated against file event"} · {formatDate(exec.created_at)}
+                        </p>
+                      </div>
+                      <span className="px-2 py-0.5 rounded bg-secondary text-secondary-foreground font-medium capitalize text-[11px] shrink-0">
+                        {exec.status}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       )}
       </div>

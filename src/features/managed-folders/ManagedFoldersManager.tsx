@@ -23,6 +23,7 @@ import {
   ShieldAlert,
 } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
+import { OrganizationRulesPanel } from "@/features/organization/OrganizationRulesPanel";
 import { ApiService } from "@/services/api";
 import type {
   FolderCapabilities,
@@ -121,7 +122,7 @@ export const ManagedFoldersManager: React.FC = () => {
     setLoading(true);
     try {
       const [fList, sData] = await Promise.all([
-        ApiService.listFolders(),
+        ApiService.listFolders(false),
         ApiService.getManagedFoldersCardsSummary().catch(() => ({
           total_folders: 0,
           active_folders: 0,
@@ -235,6 +236,7 @@ export const ManagedFoldersManager: React.FC = () => {
       setIsRegistering(false);
       setFolderPath("");
       setFolderName("");
+      window.dispatchEvent(new Event("folders-changed"));
       loadData();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Registration failed";
@@ -294,6 +296,7 @@ export const ManagedFoldersManager: React.FC = () => {
           text: `Folder '${folder.name}' enabled`,
         });
       }
+      window.dispatchEvent(new Event("folders-changed"));
       loadData();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Failed to toggle status";
@@ -317,6 +320,7 @@ export const ManagedFoldersManager: React.FC = () => {
         type: "success",
         text: `Managed Folder '${folder.name}' unregistered. Files remain untouched on disk.`,
       });
+      window.dispatchEvent(new Event("folders-changed"));
       loadData();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Failed to unregister folder";
@@ -410,7 +414,10 @@ export const ManagedFoldersManager: React.FC = () => {
         <div className="flex items-center gap-2">
           <button
             type="button"
-            onClick={loadData}
+            onClick={() => {
+              loadData();
+              window.dispatchEvent(new Event("folders-changed"));
+            }}
             disabled={loading}
             className="inline-flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-md bg-secondary text-secondary-foreground hover:bg-secondary/80 border border-border transition-colors disabled:opacity-50"
           >
@@ -419,7 +426,7 @@ export const ManagedFoldersManager: React.FC = () => {
           </button>
           <button
             type="button"
-            onClick={handlePickNativeFolder}
+            onClick={() => setIsRegistering(true)}
             className="inline-flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors shadow-xs"
           >
             <FolderPlus size={14} />
@@ -1055,59 +1062,10 @@ export const ManagedFoldersManager: React.FC = () => {
 
       {/* Tab 3: Folder Rules */}
       {activeTab === "rules" && (
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h3 className="font-semibold text-sm">Folder Automation & Pipeline Rules</h3>
-              <p className="text-xs text-muted-foreground">
-                Configured rules associated with each Managed Folder. Approved rules run within
-                their verified scope only.
-              </p>
-            </div>
-          </div>
-
-          <div className="border border-border rounded-lg bg-card overflow-hidden shadow-xs">
-            <table className="w-full text-left text-xs">
-              <thead className="bg-muted/40 text-muted-foreground border-b border-border uppercase tracking-wider text-[10px]">
-                <tr>
-                  <th className="py-2.5 px-3.5">Rule Name</th>
-                  <th className="py-2.5 px-3.5 w-32">Type</th>
-                  <th className="py-2.5 px-3.5">Target Managed Folder</th>
-                  <th className="py-2.5 px-3.5 w-28">Scope Status</th>
-                  <th className="py-2.5 px-3.5 w-24">Automation</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border">
-                {folders.map((f) => (
-                  <tr key={f.id} className="hover:bg-muted/20 transition-colors">
-                    <td className="py-2.5 px-3.5 font-medium text-foreground">
-                      {f.name} Default Extension Rule
-                    </td>
-                    <td className="py-2.5 px-3.5">
-                      <span className="px-2 py-0.5 rounded text-[10px] font-medium bg-secondary text-secondary-foreground border border-border">
-                        Organization Rule
-                      </span>
-                    </td>
-                    <td className="py-2.5 px-3.5 font-mono text-[11px] text-muted-foreground">
-                      {f.name} ({f.root_path})
-                    </td>
-                    <td className="py-2.5 px-3.5">
-                      <span className="inline-flex items-center gap-1 text-emerald-600 font-medium">
-                        <CheckCircle2 size={12} />
-                        Approved
-                      </span>
-                    </td>
-                    <td className="py-2.5 px-3.5">
-                      <span className="px-2 py-0.5 rounded text-[10px] font-medium bg-muted text-muted-foreground">
-                        Semi-Auto
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
+        <OrganizationRulesPanel
+          folders={folders}
+          selectedFolderId={selectedFolder?.id}
+        />
       )}
 
       {/* Tab 4: Exclusions Manager */}

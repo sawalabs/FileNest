@@ -1,5 +1,6 @@
 import os
 import stat
+import subprocess
 import mimetypes
 from datetime import datetime, timezone
 from pathlib import Path
@@ -574,3 +575,28 @@ class FilesystemService:
                 break
 
         return GlobalSearchResponse(query=clean_query, hits=hits, truncated=truncated)
+
+    def open_in_explorer(self, managed_folder_id: str, relative_path: str = "") -> Dict[str, Any]:
+        """Opens a validated Managed Folder or subfolder inside the native OS file explorer."""
+        folder = self._get_active_folder(managed_folder_id)
+        target = PathValidator.resolve_and_verify_scope(folder, relative_path)
+        if not target.exists():
+            raise ManagedFolderException(f"Target path does not exist: '{relative_path or folder.name}'")
+
+        if os.name == "nt":
+            try:
+                if target.is_file():
+                    subprocess.Popen(["explorer.exe", f"/select,{target}"])
+                else:
+                    os.startfile(str(target))  # type: ignore[attr-defined]
+            except Exception:
+                subprocess.Popen(["explorer.exe", str(target)])
+
+        self.audit_repo.record(
+            actor_type="user",
+            action="open_in_explorer",
+            entity_type="managed_folder",
+            entity_id=folder.id,
+            details={"relative_path": relative_path or ""},
+        )
+        return {"opened": True, "path": str(target)}

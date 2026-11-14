@@ -529,11 +529,16 @@ class SmartRenameService:
                 )
             )
 
-            raw_name = res.content.strip().split("\n")[0].strip("\"'` ")
-            if "offline simulation" in raw_name.lower() or "9router" in raw_name.lower():
-                words = [w for w in re.findall(r'[A-Za-z0-9]+', content_snippet) if len(w) >= 3 and not w.isdigit()][:4]
-                if words:
-                    return "_".join(words)
+            res_id = getattr(res, "id", "") or ""
+            res_content = getattr(res, "content", "") or ""
+            if (
+                res_id.startswith("sim_")
+                or "Offline Simulation" in res_content
+                or "9Router Gateway" in res_content
+            ):
+                raise RuntimeError("9Router returned offline simulation placeholder; falling back to local OCR keyword heuristic")
+
+            raw_name = res_content.strip().split("\n")[0].strip("\"'` ")
             clean_name = clean_filename_string(raw_name)
             if "." in clean_name:
                 clean_name = clean_name.rsplit(".", 1)[0]

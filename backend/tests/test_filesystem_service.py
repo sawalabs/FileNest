@@ -189,3 +189,43 @@ async def test_accessing_disabled_folder_rejected(async_client: AsyncClient, tmp
     )
     assert res.status_code == 400
     assert "disabled" in res.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_open_in_explorer_validates_scope_and_launches_safely(
+    async_client: AsyncClient, tmp_path: Path, monkeypatch
+):
+    import os
+    import subprocess
+
+    folder_root = tmp_path / "ExplorerRoot"
+    folder_root.mkdir()
+    (folder_root / "sub").mkdir()
+
+    reg_res = await async_client.post(
+        "/api/v1/folders/register",
+        json={"name": "ExplorerRoot", "root_path": str(folder_root)},
+    )
+    assert reg_res.status_code == 201
+    folder_id = reg_res.json()["id"]
+
+    opened_targets = []
+    if hasattr(os, "startfile"):
+        monkeypatch.setattr(os, "startfile", lambda p: opened_targets.append(p))
+    monkeypatch.setattr(subprocess, "Popen", lambda args, **kw: opened_targets.append(args))
+
+    # Valid subfolder inside scope
+    ok_res = await async_client.post(
+        "/api/v1/fs/open-explorer",
+        json={"folder_id": folder_id, "relative_path": "sub"},
+    )
+    assert ok_res.status_code == 200
+    assert ok_res.json()["opened"] is True
+    assert len(opened_targets) == 1
+
+    # Path traversal must be rejected
+    bad_res = await async_client.post(
+        "/api/v1/fs/open-explorer",
+        json={"folder_id": folder_id, "relative_path": "../outside"},
+    )
+    assert bad_res.status_code == 400

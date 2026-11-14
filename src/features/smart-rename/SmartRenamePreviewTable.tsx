@@ -361,7 +361,7 @@ export const SmartRenamePreviewTable: React.FC<SmartRenamePreviewTableProps> = (
     <div className="p-5 rounded-xl border border-border bg-card shadow-sm space-y-4 flex flex-col">
       {/* Sticky Card Header */}
       <div className="sticky top-0 z-30 bg-card/95 backdrop-blur-xs pb-3 border-b border-border/60 space-y-3">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-3">
           <div>
             <h3 className="font-semibold text-sm text-foreground flex items-center gap-2">
               <span>Rename Preview & Proposed Plan (Draft #{planId.slice(0, 8)})</span>

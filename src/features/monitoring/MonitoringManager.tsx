@@ -19,6 +19,7 @@ import {
   FileText,
 } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
+import { OrganizationRulesPanel } from "@/features/organization/OrganizationRulesPanel";
 import { ApiService } from "@/services/api";
 import { usePreferences } from "@/contexts/PreferencesContext";
 import { MonitoringSummaryCards } from "./MonitoringSummaryCards";
@@ -26,13 +27,14 @@ import { ActivityCharts } from "./ActivityCharts";
 import { WatcherConfigModal } from "./WatcherConfigModal";
 import type {
   ActivityChartPoint,
+  AuditLogItem,
   DistributionItem,
   ManagedFolder,
   MonitoringEventItem,
   MonitoringSummaryStats,
   WatcherItem,
 } from "@/types";
-import { cn } from "@/lib/utils";
+import { cn, formatDate } from "@/lib/utils";
 
 type MonitoringTab = "activity" | "watchers" | "change_rules" | "alerts" | "history";
 
@@ -67,9 +69,10 @@ export const MonitoringManager: React.FC = () => {
   const [distribution, setDistribution] = useState<DistributionItem[]>([]);
   const [timeRange, setTimeRange] = useState<string>("last_24h");
 
-  // Recent Events
+  // Recent Events & Audit History
   const [events, setEvents] = useState<MonitoringEventItem[]>([]);
   const [totalEvents, setTotalEvents] = useState(0);
+  const [auditLogs, setAuditLogs] = useState<AuditLogItem[]>([]);
 
   // Filters
   const [searchQuery, setSearchQuery] = useState("");
@@ -88,7 +91,7 @@ export const MonitoringManager: React.FC = () => {
   // Load summary stats and charts
   const loadOverviewData = useCallback(async () => {
     try {
-      const [statusRes, watchersRes, statsRes, chartRes, distRes, foldersRes] =
+      const [statusRes, watchersRes, statsRes, chartRes, distRes, foldersRes, auditRes] =
         await Promise.all([
           ApiService.getMonitoringStatus(),
           ApiService.listWatchers(),
@@ -96,6 +99,7 @@ export const MonitoringManager: React.FC = () => {
           ApiService.getMonitoringActivityChart(timeRange),
           ApiService.getMonitoringDistribution(),
           ApiService.listFolders(),
+          ApiService.getAuditLogs({ limit: 50 }).catch(() => ({ total: 0, items: [] })),
         ]);
 
       setServiceStatus(statusRes.status);
@@ -105,6 +109,7 @@ export const MonitoringManager: React.FC = () => {
       setChartPoints(chartRes.data_points);
       setDistribution(distRes.distribution);
       setFolders(foldersRes);
+      setAuditLogs(auditRes.items || []);
       setLastUpdated(new Date().toLocaleTimeString());
     } catch (err: unknown) {
       console.error("Failed to load monitoring overview data", err);
@@ -763,88 +768,216 @@ export const MonitoringManager: React.FC = () => {
 
       {/* Tab 3: Change Rules */}
       {activeTab === "change_rules" && (
-        <div className="p-6 rounded-lg border border-border bg-card space-y-4">
-          <div className="flex items-center gap-3">
-            <div className="p-2.5 rounded-lg bg-primary/10 text-primary">
-              <ShieldCheck size={20} />
+        <div className="space-y-4">
+          <div className="p-5 rounded-lg border border-border bg-card space-y-3">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 rounded-lg bg-primary/10 text-primary">
+                <ShieldCheck size={20} />
+              </div>
+              <div>
+                <h3 className="font-semibold text-sm">Monitoring-Triggered Change Rules</h3>
+                <p className="text-xs text-muted-foreground">
+                  Approved automation rules evaluated safely when Watchdog detects new or modified files inside Managed Folders.
+                </p>
+              </div>
             </div>
-            <div>
-              <h3 className="font-semibold text-sm">Monitoring-Triggered Change Rules</h3>
-              <p className="text-xs text-muted-foreground">
-                How filesystem events interact with organization rules and safe transactions.
-              </p>
+            <div className="p-3 rounded-lg border border-border bg-muted/20 text-xs text-muted-foreground">
+              <span className="font-semibold text-foreground mr-2">Safety Guarantees:</span>
+              Watchers never mutate files directly; approved rules create validated Change Plans routed through the Transaction Manager.
             </div>
           </div>
 
-          <div className="space-y-3 text-xs text-muted-foreground leading-relaxed pt-2">
-            <p>
-              When Watchdog detects newly added or modified files inside a monitored Managed Folder,
-              it normalizes paths and evaluates whether any user-approved organization or rename rule applies.
-            </p>
-            <div className="p-3.5 rounded-lg border border-border bg-muted/20 space-y-1.5 text-foreground">
-              <span className="font-semibold block">Safety Guarantees:</span>
-              <ul className="list-disc list-inside space-y-1 text-muted-foreground">
-                <li>Monitoring never mutates, moves, or deletes files directly.</li>
-                <li>All suggested actions create structured Change Plans routed to Review Changes.</li>
-                <li>Watchers strictly confine their activities to registered Managed Folders.</li>
-                <li>Reparse points and symlinks are excluded from recursive observation.</li>
-              </ul>
-            </div>
-          </div>
+          <OrganizationRulesPanel
+            folders={folders}
+            selectedFolderId={selectedFolderId !== "all" ? selectedFolderId : undefined}
+          />
         </div>
       )}
 
       {/* Tab 4: Alerts */}
-      {activeTab === "alerts" && (
-        <div className="p-6 rounded-lg border border-border bg-card space-y-4">
-          <div className="flex items-center gap-3">
-            <div className="p-2.5 rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-400">
-              <Bell size={20} />
-            </div>
-            <div>
-              <h3 className="font-semibold text-sm">Monitoring Notifications & Alerts</h3>
-              <p className="text-xs text-muted-foreground">
-                Real-time warnings for burst writes, rapid deletions, and watcher status events.
-              </p>
-            </div>
-          </div>
+      {activeTab === "alerts" && (() => {
+        const watcherErrors = watchers.filter((w) => w.status === "error" || Boolean(w.error_message));
+        const alertEvents = events.filter(
+          (e) => e.event_type === "deleted" || e.status === "failed"
+        );
+        return (
+          <div className="space-y-4">
+            <div className="p-5 rounded-lg border border-border bg-card space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-400">
+                    <Bell size={20} />
+                  </div>
+                  <div>
+                    <h3 className="font-semibold text-sm">Monitoring Notifications & Alerts</h3>
+                    <p className="text-xs text-muted-foreground">
+                      Live watcher errors, failed event evaluations, and deletion spikes across Managed Folders.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    loadOverviewData();
+                    loadEvents();
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border bg-background hover:bg-muted text-xs font-medium"
+                >
+                  <RefreshCw size={13} className={isLoading ? "animate-spin" : ""} />
+                  <span>Refresh</span>
+                </button>
+              </div>
 
-          <div className="p-4 rounded-lg border border-border bg-muted/20 text-xs space-y-2">
-            <div className="flex items-center justify-between text-foreground font-medium">
-              <span className="flex items-center gap-1.5">
-                <Clock size={13} className="text-primary" />
-                Active Observers Health
-              </span>
-              <span className="text-emerald-600 dark:text-emerald-400 font-semibold">
-                Nominal
-              </span>
+              <div className="p-4 rounded-lg border border-border bg-muted/20 text-xs space-y-1.5">
+                <div className="flex items-center justify-between text-foreground font-medium">
+                  <span className="flex items-center gap-1.5">
+                    <Clock size={13} className="text-primary" />
+                    Active Observers Health ({activeWatchersCount} active)
+                  </span>
+                  <span
+                    className={cn(
+                      "font-semibold",
+                      watcherErrors.length > 0
+                        ? "text-rose-600 dark:text-rose-400"
+                        : "text-emerald-600 dark:text-emerald-400"
+                    )}
+                  >
+                    {watcherErrors.length > 0 ? `${watcherErrors.length} Watcher Error(s)` : "Nominal"}
+                  </span>
+                </div>
+                <p className="text-muted-foreground">
+                  {watcherErrors.length === 0
+                    ? `All ${activeWatchersCount} active watcher(s) reporting healthy capture; ${alertEvents.length} deletion/failure event(s) in current filter.`
+                    : "Some watchers reported errors and may require reconfiguration or restart."}
+                </p>
+              </div>
+
+              {watcherErrors.length > 0 && (
+                <div className="space-y-2">
+                  <h4 className="text-xs font-semibold text-rose-600 dark:text-rose-400">
+                    Watcher Errors
+                  </h4>
+                  <div className="divide-y divide-border rounded-lg border border-rose-500/30 bg-rose-500/5">
+                    {watcherErrors.map((w) => (
+                      <div key={w.folder_id} className="p-3 text-xs flex items-center justify-between gap-3">
+                        <div>
+                          <p className="font-semibold text-foreground">{w.folder_name}</p>
+                          <p className="text-[11px] text-rose-600 dark:text-rose-400">
+                            {w.error_message || "Watcher entered error state"}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setConfiguringWatcher(w)}
+                          className="px-2.5 py-1 rounded border border-border bg-background hover:bg-muted text-[11px] font-medium"
+                        >
+                          Configure
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="space-y-2">
+                <h4 className="text-xs font-semibold text-foreground">
+                  High-Attention Events (Deletions & Failures)
+                </h4>
+                {alertEvents.length === 0 ? (
+                  <p className="py-6 text-center text-xs text-muted-foreground border border-dashed border-border rounded-lg">
+                    No deletion or failed processing alerts detected in the selected window.
+                  </p>
+                ) : (
+                  <div className="divide-y divide-border rounded-lg border border-border overflow-hidden">
+                    {alertEvents.slice(0, 20).map((ev) => (
+                      <div key={ev.id} className="p-3 text-xs flex items-center justify-between gap-3 bg-background/40">
+                        <div className="min-w-0">
+                          <p className="font-mono text-[11px] text-foreground truncate">
+                            [{ev.managed_folder_name}] {ev.relative_path}
+                          </p>
+                          <p className="text-[11px] text-muted-foreground">
+                            {formatDate(ev.occurred_at)} · status: {ev.status}
+                          </p>
+                        </div>
+                        <span className="px-2 py-0.5 rounded bg-rose-500/10 text-rose-600 dark:text-rose-400 font-medium capitalize text-[11px] shrink-0">
+                          {ev.event_type}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
-            <p className="text-muted-foreground">
-              All {activeWatchersCount} active watcher(s) are reporting healthy event capture with zero buffer overflows.
-            </p>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Tab 5: History */}
       {activeTab === "history" && (
-        <div className="p-6 rounded-lg border border-border bg-card space-y-4">
-          <div className="flex items-center gap-3">
-            <div className="p-2.5 rounded-lg bg-blue-500/10 text-blue-600 dark:text-blue-400">
-              <Clock size={20} />
+        <div className="p-5 rounded-lg border border-border bg-card space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 rounded-lg bg-blue-500/10 text-blue-600 dark:text-blue-400">
+                <Clock size={20} />
+              </div>
+              <div>
+                <h3 className="font-semibold text-sm">Monitoring Audit History</h3>
+                <p className="text-xs text-muted-foreground">
+                  Recorded watcher lifecycle events, rule audits, and recent monitoring activity.
+                </p>
+              </div>
             </div>
-            <div>
-              <h3 className="font-semibold text-sm">Monitoring Audit History</h3>
-              <p className="text-xs text-muted-foreground">
-                Persistent audit history for watcher starts, stops, pauses, and recorded events.
-              </p>
-            </div>
+            <button
+              type="button"
+              onClick={() => {
+                loadOverviewData();
+                loadEvents();
+              }}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border bg-background hover:bg-muted text-xs font-medium"
+            >
+              <RefreshCw size={13} className={isLoading ? "animate-spin" : ""} />
+              <span>Refresh</span>
+            </button>
           </div>
 
-          <p className="text-xs text-muted-foreground">
-            All monitoring lifecycle activities (start, stop, pause, resume) and file events are recorded in the central
-            audit system. You can inspect the full audit trail in the <strong>History</strong> section under the Monitoring tab.
-          </p>
+          {auditLogs.length === 0 && events.length === 0 ? (
+            <div className="py-10 text-center text-xs text-muted-foreground border border-dashed border-border rounded-lg">
+              No monitoring audit entries or filesystem events recorded yet.
+            </div>
+          ) : (
+            <div className="border border-border rounded-lg overflow-hidden">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-muted/40 text-muted-foreground border-b border-border uppercase tracking-wider text-[10px]">
+                  <tr>
+                    <th className="py-2 px-3">Timestamp</th>
+                    <th className="py-2 px-3">Actor / Source</th>
+                    <th className="py-2 px-3">Action / Event</th>
+                    <th className="py-2 px-3">Target</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {auditLogs.slice(0, 25).map((log) => (
+                    <tr key={`audit-${log.id}`} className="hover:bg-muted/20">
+                      <td className="py-2 px-3 font-mono text-[11px] text-muted-foreground whitespace-nowrap">
+                        {formatDate(log.created_at)}
+                      </td>
+                      <td className="py-2 px-3 capitalize font-medium text-foreground">
+                        {log.actor_type} ({log.entity_type})
+                      </td>
+                      <td className="py-2 px-3">
+                        <span className="px-2 py-0.5 rounded bg-secondary text-secondary-foreground font-medium text-[11px]">
+                          {log.action}
+                        </span>
+                      </td>
+                      <td className="py-2 px-3 font-mono text-[11px] text-muted-foreground truncate max-w-sm">
+                        {log.entity_id || JSON.stringify(log.details || {})}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
 

@@ -117,3 +117,51 @@ async def test_trigger_dashboard_analyze_metadata(async_client: AsyncClient, tmp
     assert job["status"] == "completed"
     assert job["progress_percent"] == 100
     assert "AnalyzeFolder" in job["job_name"]
+
+
+@pytest.mark.asyncio
+async def test_dashboard_overview_changes_7d_reflects_real_operations(async_client: AsyncClient, tmp_path):
+    """Verifies changes_7d metrics come from real completed operations rather than hardcoded numbers."""
+    empty_res = await async_client.get("/api/v1/dashboard/overview")
+    assert empty_res.status_code == 200
+    assert empty_res.json()["changes_7d"] == {
+        "files_added": 0,
+        "files_renamed": 0,
+        "files_moved": 0,
+        "files_deleted": 0,
+    }
+
+    folder_root = tmp_path / "Changes7dRoot"
+    folder_root.mkdir()
+    (folder_root / "alpha.txt").write_text("hello")
+    reg_res = await async_client.post(
+        "/api/v1/folders/register",
+        json={"name": "Changes7dRoot", "root_path": str(folder_root.resolve())},
+    )
+    folder_id = reg_res.json()["id"]
+
+    # Perform 1 directory creation and 1 rename via Transaction Manager
+    await async_client.post(
+        "/api/v1/transactions/quick/create-folder",
+        json={
+            "managed_folder_id": folder_id,
+            "parent_relative_path": "",
+            "folder_name": "CreatedDir",
+        },
+    )
+    await async_client.post(
+        "/api/v1/transactions/quick/rename",
+        json={
+            "managed_folder_id": folder_id,
+            "source_relative_path": "alpha.txt",
+            "new_name": "beta.txt",
+        },
+    )
+
+    pop_res = await async_client.get("/api/v1/dashboard/overview")
+    assert pop_res.status_code == 200
+    c7d = pop_res.json()["changes_7d"]
+    assert c7d["files_added"] == 1
+    assert c7d["files_renamed"] == 1
+    assert c7d["files_moved"] == 0
+    assert c7d["files_deleted"] == 0
