@@ -52,6 +52,14 @@ class ExecutionStatus(str, Enum):
 # Request Models
 class ChangePlanItemCreate(BaseModel):
     operation: OperationType
+    source_managed_folder_id: Optional[str] = Field(
+        default=None,
+        description="Source Managed Folder ID if different from plan root.",
+    )
+    destination_managed_folder_id: Optional[str] = Field(
+        default=None,
+        description="Destination Managed Folder ID if different from plan root.",
+    )
     source_relative_path: Optional[str] = Field(
         default=None,
         description="Source path relative to managed folder root. Nullable for create_directory.",
@@ -59,6 +67,10 @@ class ChangePlanItemCreate(BaseModel):
     destination_relative_path: Optional[str] = Field(
         default=None,
         description="Destination path relative to managed folder root. Nullable for delete operations.",
+    )
+    conflict_resolution: Optional[str] = Field(
+        default="fail",
+        description="Strategy if destination exists: 'fail', 'rename', 'skip'",
     )
     expected_size_bytes: Optional[int] = Field(
         default=None,
@@ -73,6 +85,7 @@ class ChangePlanItemCreate(BaseModel):
         description="Optional expected content hash.",
     )
     sequence_no: int = Field(default=1, description="Execution sequence order (1-based).")
+
 
 
 class ChangePlanCreate(BaseModel):
@@ -103,6 +116,15 @@ class QuickMoveRequest(BaseModel):
     managed_folder_id: str
     source_relative_paths: List[str] = Field(min_length=1)
     destination_directory_relative_path: str = ""
+    destination_managed_folder_id: Optional[str] = Field(
+        default=None,
+        description="Destination Managed Folder ID if moving across managed folders or drives.",
+    )
+    conflict_resolution: Optional[str] = Field(
+        default="fail",
+        description="Collision strategy: 'fail', 'rename', 'skip'",
+    )
+
 
 
 class QuickCopyRequest(BaseModel):
@@ -155,8 +177,16 @@ class ChangePlanItemResponse(BaseModel):
     id: str
     change_plan_id: str
     operation: str
+    source_managed_folder_id: Optional[str] = None
+    destination_managed_folder_id: Optional[str] = None
+    source_managed_folder_name: Optional[str] = None
+    destination_managed_folder_name: Optional[str] = None
     source_relative_path: Optional[str] = None
     destination_relative_path: Optional[str] = None
+    source_canonical_path: Optional[str] = None
+    destination_canonical_path: Optional[str] = None
+    move_type: Optional[str] = None
+    conflict_resolution: Optional[str] = None
     expected_size_bytes: Optional[int] = None
     expected_modified_at: Optional[str] = None
     expected_hash: Optional[str] = None
@@ -166,6 +196,7 @@ class ChangePlanItemResponse(BaseModel):
     created_at: str
 
     model_config = ConfigDict(from_attributes=True)
+
 
 
 class ExecutionJobResponse(BaseModel):

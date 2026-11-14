@@ -400,7 +400,9 @@ export class ApiService {
   public static async quickMove(
     folderId: string,
     sourceRelativePaths: string[],
-    destinationDirectory: string
+    destinationDirectory: string,
+    destinationManagedFolderId?: string,
+    conflictResolution?: "fail" | "rename" | "skip"
   ): Promise<ExecutionJobResponse> {
     const response = await fetch(`${this.baseUrl}/api/v1/transactions/quick/move`, {
       method: "POST",
@@ -409,6 +411,8 @@ export class ApiService {
         managed_folder_id: folderId,
         source_relative_paths: sourceRelativePaths,
         destination_directory_relative_path: destinationDirectory,
+        destination_managed_folder_id: destinationManagedFolderId || undefined,
+        conflict_resolution: conflictResolution || "fail",
       }),
     });
     if (!response.ok) {

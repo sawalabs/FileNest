@@ -55,6 +55,49 @@ def _serialize_plan(plan: ChangePlan) -> ChangePlanResponse:
             ],
         )
 
+    folder_names: dict[str, str] = {}
+    if plan.managed_folder:
+        folder_names[plan.managed_folder.id] = plan.managed_folder.name
+
+    serialized_items = []
+    for item in plan.items:
+        src_id = item.source_managed_folder_id or plan.managed_folder_id
+        dst_id = item.destination_managed_folder_id or plan.managed_folder_id
+        for f_id in (src_id, dst_id):
+            if f_id and f_id not in folder_names:
+                from backend.app.db.models.managed_folder import ManagedFolder
+                from sqlalchemy.orm import object_session
+                session = object_session(plan)
+                if session:
+                    mf = session.get(ManagedFolder, f_id)
+                    if mf:
+                        folder_names[f_id] = mf.name
+
+        serialized_items.append(
+            ChangePlanItemResponse(
+                id=item.id,
+                change_plan_id=item.change_plan_id,
+                operation=item.operation,
+                source_managed_folder_id=src_id,
+                destination_managed_folder_id=dst_id,
+                source_managed_folder_name=folder_names.get(src_id),
+                destination_managed_folder_name=folder_names.get(dst_id),
+                source_relative_path=item.source_relative_path,
+                destination_relative_path=item.destination_relative_path,
+                source_canonical_path=item.source_canonical_path,
+                destination_canonical_path=item.destination_canonical_path,
+                move_type=item.move_type,
+                conflict_resolution=item.conflict_resolution,
+                expected_size_bytes=item.expected_size_bytes,
+                expected_modified_at=item.expected_modified_at,
+                expected_hash=item.expected_hash,
+                status=item.status,
+                conflict_reason=item.conflict_reason,
+                sequence_no=item.sequence_no,
+                created_at=item.created_at,
+            )
+        )
+
     return ChangePlanResponse(
         id=plan.id,
         managed_folder_id=plan.managed_folder_id,
@@ -67,7 +110,7 @@ def _serialize_plan(plan: ChangePlan) -> ChangePlanResponse:
         approved_by=plan.approved_by,
         created_at=plan.created_at,
         updated_at=plan.updated_at,
-        items=[ChangePlanItemResponse.model_validate(item) for item in plan.items],
+        items=serialized_items,
         latest_execution_job=latest_job_resp,
     )
 

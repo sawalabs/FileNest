@@ -600,8 +600,19 @@ export const FilesManager: React.FC<FilesManagerProps> = ({
     browseCurrentDirectory();
   };
 
-  const handleMove = async (sourcePaths: string[], destDir: string) => {
-    await ApiService.quickMove(selectedFolderId, sourcePaths, destDir);
+  const handleMove = async (
+    sourcePaths: string[],
+    destDir: string,
+    targetFolderId?: string,
+    conflictResolution?: "fail" | "rename" | "skip"
+  ) => {
+    await ApiService.quickMove(
+      selectedFolderId,
+      sourcePaths,
+      destDir,
+      targetFolderId,
+      conflictResolution
+    );
     showToast(`Moved ${sourcePaths.length} item(s) to ${destDir ? `/${destDir}` : "Root"}.`);
     setTreeSubfolderCache({});
     browseCurrentDirectory();

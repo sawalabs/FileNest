@@ -73,8 +73,18 @@ class ChangePlanItem(Base):
         String(36), ForeignKey("change_plans.id", ondelete="CASCADE"), nullable=False
     )
     operation: Mapped[str] = mapped_column(String(32), nullable=False)
+    source_managed_folder_id: Mapped[Optional[str]] = mapped_column(
+        String(36), ForeignKey("managed_folders.id", ondelete="SET NULL"), nullable=True
+    )
+    destination_managed_folder_id: Mapped[Optional[str]] = mapped_column(
+        String(36), ForeignKey("managed_folders.id", ondelete="SET NULL"), nullable=True
+    )
     source_relative_path: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
     destination_relative_path: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
+    source_canonical_path: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
+    destination_canonical_path: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
+    move_type: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    conflict_resolution: Mapped[Optional[str]] = mapped_column(String(32), nullable=True, default="fail")
     expected_size_bytes: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     expected_modified_at: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     expected_hash: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)

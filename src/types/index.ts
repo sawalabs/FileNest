@@ -453,12 +453,23 @@ export interface ChangePlanItemResponse {
   id: string;
   change_plan_id: string;
   operation: string;
+  source_managed_folder_id?: string | null;
+  destination_managed_folder_id?: string | null;
+  source_managed_folder_name?: string | null;
+  destination_managed_folder_name?: string | null;
   source_relative_path?: string | null;
   destination_relative_path?: string | null;
+  source_canonical_path?: string | null;
+  destination_canonical_path?: string | null;
+  move_type?: string | null;
+  conflict_resolution?: string | null;
   expected_size_bytes?: number | null;
+  expected_modified_at?: string | null;
+  expected_hash?: string | null;
   status: string;
   conflict_reason?: string | null;
   sequence_no: number;
+  created_at?: string;
 }
 
 export interface ChangePlanResponse {

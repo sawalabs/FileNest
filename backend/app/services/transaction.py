@@ -1,7 +1,9 @@
+import hashlib
 import json
 import os
 import shutil
 import stat
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -33,12 +35,59 @@ from backend.app.schemas.transaction import (
     UndoExecutionResponse,
 )
 from backend.app.services.filesystem import is_reparse_point_or_symlink
-from backend.app.services.managed_folder import ManagedFolderException, PathValidator
+from backend.app.services.managed_folder import (
+    ManagedFolderException,
+    PathValidator,
+    ProtectedPathRegistry,
+)
 
 
 class TransactionException(Exception):
     """Custom exception for filesystem transaction errors, conflicts, and validation failures."""
     pass
+
+
+def compute_file_sha256(path: Path) -> str:
+    """Calculates SHA-256 hash of a file for integrity verification."""
+    hasher = hashlib.sha256()
+    with open(path, "rb") as f:
+        while chunk := f.read(65536):
+            hasher.update(chunk)
+    return hasher.hexdigest()
+
+
+def is_cross_volume_move(src_path: Path, dst_path: Path) -> bool:
+    """Determines whether moving from src_path to dst_path crosses filesystem volume/drive boundaries."""
+    src_drive = src_path.drive.upper() if src_path.drive else ""
+    dst_drive = dst_path.drive.upper() if dst_path.drive else ""
+    if src_drive and dst_drive:
+        return src_drive != dst_drive
+    try:
+        if src_path.exists():
+            src_dev = src_path.stat().st_dev
+            dst_target = dst_path if dst_path.exists() else dst_path.parent
+            if dst_target.exists():
+                return src_dev != dst_target.stat().st_dev
+    except Exception:
+        pass
+    return False
+
+
+def resolve_collision_path(dst_path: Path, conflict_resolution: str) -> Tuple[Path, bool]:
+    """Applies conflict resolution strategy to compute non-colliding destination path."""
+    if not dst_path.exists():
+        return dst_path, False
+    if conflict_resolution == "rename":
+        parent = dst_path.parent
+        stem = dst_path.stem
+        suffix = dst_path.suffix
+        counter = 1
+        while True:
+            candidate = parent / f"{stem} ({counter}){suffix}"
+            if not candidate.exists():
+                return candidate, True
+            counter += 1
+    return dst_path, False
 
 
 def send_to_recycle_bin(path: Path) -> Tuple[bool, Optional[Path]]:
@@ -119,10 +168,10 @@ class TransactionManagerService:
 
     def create_plan(self, payload: ChangePlanCreate, created_by: str = "user") -> ChangePlan:
         """Creates and stores a validated change plan in draft/pending status."""
-        folder = self._get_managed_folder(payload.managed_folder_id)
+        plan_folder = self._get_managed_folder(payload.managed_folder_id)
 
         plan = ChangePlan(
-            managed_folder_id=folder.id,
+            managed_folder_id=plan_folder.id,
             analysis_run_id=payload.analysis_run_id,
             title=payload.title.strip(),
             plan_type=payload.plan_type.value,
@@ -134,11 +183,65 @@ class TransactionManagerService:
 
         for idx, item_data in enumerate(payload.items, start=1):
             seq = item_data.sequence_no or idx
+            src_folder_id = item_data.source_managed_folder_id or plan_folder.id
+            dst_folder_id = item_data.destination_managed_folder_id or plan_folder.id
+
+            src_folder = self._get_managed_folder(src_folder_id)
+            dst_folder = self._get_managed_folder(dst_folder_id)
+
+            src_canonical: Optional[Path] = None
+            dst_canonical: Optional[Path] = None
+
+            if item_data.source_relative_path:
+                try:
+                    src_canonical = PathValidator.resolve_and_verify_scope(
+                        src_folder, item_data.source_relative_path
+                    )
+                    ProtectedPathRegistry.deny_if_protected(src_canonical, "source_path")
+                except Exception:
+                    src_canonical = None
+
+            if item_data.destination_relative_path:
+                try:
+                    dst_canonical = PathValidator.resolve_and_verify_scope(
+                        dst_folder, item_data.destination_relative_path
+                    )
+                    ProtectedPathRegistry.deny_if_protected(dst_canonical, "destination_path")
+                except Exception:
+                    dst_canonical = None
+
+            move_type = None
+            if item_data.operation == OperationType.MOVE:
+                if src_canonical and dst_canonical:
+                    move_type = "cross_volume" if is_cross_volume_move(src_canonical, dst_canonical) else "same_volume"
+                elif src_folder and dst_folder:
+                    move_type = "cross_volume" if Path(src_folder.root_path).drive != Path(dst_folder.root_path).drive else "same_volume"
+
+            dest_rel = item_data.destination_relative_path
+            conflict_res = item_data.conflict_resolution or "fail"
+
+            if (
+                item_data.operation in (OperationType.MOVE, OperationType.COPY, OperationType.RENAME)
+                and dst_canonical
+                and dst_canonical.exists()
+                and conflict_res == "rename"
+            ):
+                resolved_dst, renamed = resolve_collision_path(dst_canonical, "rename")
+                if renamed:
+                    dst_canonical = resolved_dst
+                    dest_rel = dst_canonical.relative_to(Path(dst_folder.root_path).resolve()).as_posix()
+
             item = ChangePlanItem(
                 change_plan_id=plan.id,
                 operation=item_data.operation.value,
+                source_managed_folder_id=src_folder.id,
+                destination_managed_folder_id=dst_folder.id,
                 source_relative_path=item_data.source_relative_path,
-                destination_relative_path=item_data.destination_relative_path,
+                destination_relative_path=dest_rel,
+                source_canonical_path=str(src_canonical) if src_canonical else None,
+                destination_canonical_path=str(dst_canonical) if dst_canonical else None,
+                move_type=move_type,
+                conflict_resolution=conflict_res,
                 expected_size_bytes=item_data.expected_size_bytes,
                 expected_modified_at=item_data.expected_modified_at,
                 expected_hash=item_data.expected_hash,
@@ -265,7 +368,7 @@ class TransactionManagerService:
     def validate_plan(self, plan_id: str) -> PlanValidationSummary:
         """Validates all operations in a Change Plan against filesystem state."""
         plan = self.get_plan(plan_id)
-        folder = self._get_managed_folder(plan.managed_folder_id)
+        plan_folder = self._get_managed_folder(plan.managed_folder_id)
 
         issues: List[PlanValidationIssue] = []
         simulated_created_dirs: set[str] = set()
@@ -284,6 +387,39 @@ class TransactionManagerService:
         for idx, item in enumerate(plan.items):
             op = item.operation
             item_has_conflict = False
+
+            src_folder_id = item.source_managed_folder_id or plan.managed_folder_id
+            dst_folder_id = item.destination_managed_folder_id or plan.managed_folder_id
+
+            try:
+                src_folder = self._get_managed_folder(src_folder_id)
+            except TransactionException as fe:
+                issues.append(
+                    PlanValidationIssue(
+                        item_index=idx,
+                        sequence_no=item.sequence_no,
+                        operation=op,
+                        issue_type="error",
+                        message=f"Source Managed Folder invalid: {fe}",
+                    )
+                )
+                item_has_conflict = True
+                src_folder = plan_folder
+
+            try:
+                dst_folder = self._get_managed_folder(dst_folder_id)
+            except TransactionException as fe:
+                issues.append(
+                    PlanValidationIssue(
+                        item_index=idx,
+                        sequence_no=item.sequence_no,
+                        operation=op,
+                        issue_type="error",
+                        message=f"Destination Managed Folder invalid: {fe}",
+                    )
+                )
+                item_has_conflict = True
+                dst_folder = plan_folder
 
             src_norm = Path(item.source_relative_path).as_posix() if item.source_relative_path else ""
             dst_norm = Path(item.destination_relative_path).as_posix() if item.destination_relative_path else ""
@@ -318,7 +454,7 @@ class TransactionManagerService:
                     pass
                 else:
                     try:
-                        src_path = PathValidator.resolve_and_verify_scope(folder, item.source_relative_path)
+                        src_path = PathValidator.resolve_and_verify_scope(src_folder, item.source_relative_path)
                         if not src_path.exists():
                             issues.append(
                                 PlanValidationIssue(
@@ -344,6 +480,62 @@ class TransactionManagerService:
                             )
                             item_has_conflict = True
                         else:
+                            # Verify recursive contents for directories
+                            if src_path.is_dir() and op == "move":
+                                for root_dir, dirs, files in os.walk(src_path):
+                                    for d in dirs:
+                                        dp = Path(root_dir) / d
+                                        if is_reparse_point_or_symlink(dp):
+                                            issues.append(
+                                                PlanValidationIssue(
+                                                    item_index=idx,
+                                                    sequence_no=item.sequence_no,
+                                                    operation=op,
+                                                    source_relative_path=item.source_relative_path,
+                                                    issue_type="error",
+                                                    message=f"Directory contains symlink/reparse point: {dp.name}",
+                                                )
+                                            )
+                                            item_has_conflict = True
+                                        elif ProtectedPathRegistry.is_protected_path(dp):
+                                            issues.append(
+                                                PlanValidationIssue(
+                                                    item_index=idx,
+                                                    sequence_no=item.sequence_no,
+                                                    operation=op,
+                                                    source_relative_path=item.source_relative_path,
+                                                    issue_type="error",
+                                                    message=f"Directory contains protected path: {dp.name}",
+                                                )
+                                            )
+                                            item_has_conflict = True
+                                    for f in files:
+                                        fp = Path(root_dir) / f
+                                        if is_reparse_point_or_symlink(fp):
+                                            issues.append(
+                                                PlanValidationIssue(
+                                                    item_index=idx,
+                                                    sequence_no=item.sequence_no,
+                                                    operation=op,
+                                                    source_relative_path=item.source_relative_path,
+                                                    issue_type="error",
+                                                    message=f"Directory contains symlink/reparse point: {fp.name}",
+                                                )
+                                            )
+                                            item_has_conflict = True
+                                        elif ProtectedPathRegistry.is_protected_path(fp):
+                                            issues.append(
+                                                PlanValidationIssue(
+                                                    item_index=idx,
+                                                    sequence_no=item.sequence_no,
+                                                    operation=op,
+                                                    source_relative_path=item.source_relative_path,
+                                                    issue_type="error",
+                                                    message=f"Directory contains protected path: {fp.name}",
+                                                )
+                                            )
+                                            item_has_conflict = True
+
                             # Stale verification check
                             st = src_path.stat()
                             if item.expected_size_bytes is not None and st.st_size != item.expected_size_bytes:
@@ -385,23 +577,20 @@ class TransactionManagerService:
                     item_has_conflict = True
                 else:
                     try:
-                        dst_path = PathValidator.resolve_and_verify_scope(folder, item.destination_relative_path)
+                        dst_path = PathValidator.resolve_and_verify_scope(dst_folder, item.destination_relative_path)
                         
                         # Check case-only rename of the same file
                         is_same_file_case_rename = (
                             op in ("rename", "move")
+                            and src_folder.id == dst_folder.id
                             and src_norm
                             and dst_norm
                             and src_norm.lower() == dst_norm.lower()
                         )
 
                         if is_same_file_case_rename:
-                            # On Windows/case-insensitive filesystems, dst_path.exists() is True
-                            # because the source file itself exists on disk.
-                            # Only treat as collision if another operation in this plan created this exact path.
                             is_occupied = dst_norm.lower() in {p.lower() for p in simulated_created_paths}
                         elif op == "create_directory":
-                            # Creating an already existing directory is idempotent; only conflict if it exists as a FILE
                             is_occupied = dst_path.is_file()
                         else:
                             in_sim_created = (
@@ -416,22 +605,37 @@ class TransactionManagerService:
                             is_occupied = in_sim_created or (exists_on_disk and not was_sim_removed)
 
                         if is_occupied:
-                            issues.append(
-                                PlanValidationIssue(
-                                    item_index=idx,
-                                    sequence_no=item.sequence_no,
-                                    operation=op,
-                                    destination_relative_path=item.destination_relative_path,
-                                    issue_type="conflict",
-                                    message=f"Destination collision: '{item.destination_relative_path}' already exists (no silent overwrite permitted)",
+                            conflict_res = item.conflict_resolution or "fail"
+                            if conflict_res == "skip":
+                                issues.append(
+                                    PlanValidationIssue(
+                                        item_index=idx,
+                                        sequence_no=item.sequence_no,
+                                        operation=op,
+                                        destination_relative_path=item.destination_relative_path,
+                                        issue_type="warning",
+                                        message=f"Destination collision: '{item.destination_relative_path}' already exists (will be skipped safely)",
+                                    )
                                 )
-                            )
-                            item_has_conflict = True
+                            elif conflict_res == "rename":
+                                pass
+                            else:
+                                issues.append(
+                                    PlanValidationIssue(
+                                        item_index=idx,
+                                        sequence_no=item.sequence_no,
+                                        operation=op,
+                                        destination_relative_path=item.destination_relative_path,
+                                        issue_type="conflict",
+                                        message=f"Destination collision: '{item.destination_relative_path}' already exists (no silent overwrite permitted)",
+                                    )
+                                )
+                                item_has_conflict = True
                         else:
                             # Check destination parent directory existence
                             parent_rel = Path(item.destination_relative_path).parent.as_posix()
                             if parent_rel not in (".", ""):
-                                parent_path = (Path(folder.root_path) / parent_rel).resolve()
+                                parent_path = (Path(dst_folder.root_path) / parent_rel).resolve()
                                 if not parent_path.exists() and parent_rel not in simulated_created_dirs:
                                     issues.append(
                                         PlanValidationIssue(
@@ -448,7 +652,7 @@ class TransactionManagerService:
                         # For move: destination cannot be nested inside source directory
                         if op == "move" and item.source_relative_path:
                             try:
-                                src_p = (Path(folder.root_path) / item.source_relative_path).resolve()
+                                src_p = (Path(src_folder.root_path) / item.source_relative_path).resolve()
                                 if dst_path == src_p or src_p in dst_path.parents:
                                     issues.append(
                                         PlanValidationIssue(
@@ -721,14 +925,19 @@ class TransactionManagerService:
         op = item.operation
         revert_context: Dict[str, Any] = {"operation": op}
 
+        src_folder = self._get_managed_folder(item.source_managed_folder_id or folder.id)
+        dst_folder = self._get_managed_folder(item.destination_managed_folder_id or folder.id)
+
         # Resolve paths with scope confinement
         src_path: Optional[Path] = None
         dst_path: Optional[Path] = None
 
         if item.source_relative_path:
-            src_path = PathValidator.resolve_and_verify_scope(folder, item.source_relative_path)
+            src_path = PathValidator.resolve_and_verify_scope(src_folder, item.source_relative_path)
+            ProtectedPathRegistry.deny_if_protected(src_path, "execute_source")
         if item.destination_relative_path:
-            dst_path = PathValidator.resolve_and_verify_scope(folder, item.destination_relative_path)
+            dst_path = PathValidator.resolve_and_verify_scope(dst_folder, item.destination_relative_path)
+            ProtectedPathRegistry.deny_if_protected(dst_path, "execute_destination")
 
         if op == OperationType.CREATE_DIRECTORY.value:
             if not dst_path:
@@ -749,7 +958,16 @@ class TransactionManagerService:
                 and src_path.name.lower() == dst_path.name.lower()
             )
             if dst_path.exists() and not is_same_file_case:
-                raise TransactionException(f"Destination collision: '{dst_path.name}' already exists")
+                conflict_res = item.conflict_resolution or "fail"
+                if conflict_res == "skip":
+                    op_log.status = "skipped"
+                    op_log.error_message = f"Skipped: destination '{dst_path.name}' already exists"
+                    item.status = "skipped"
+                    return {"operation": "skip"}
+                elif conflict_res == "rename":
+                    dst_path, _ = resolve_collision_path(dst_path, "rename")
+                else:
+                    raise TransactionException(f"Destination collision: '{dst_path.name}' already exists")
             src_path.rename(dst_path)
             revert_context["source_path"] = str(src_path)
             revert_context["dest_path"] = str(dst_path)
@@ -764,14 +982,155 @@ class TransactionManagerService:
                 src_path.resolve() == dst_path.resolve()
                 and src_path.name.lower() == dst_path.name.lower()
             )
+            conflict_res = item.conflict_resolution or "fail"
             if dst_path.exists() and not is_same_file_case:
-                raise TransactionException(f"Destination collision: '{dst_path.name}' already exists")
-            
-            # Ensure destination directory hierarchy exists
-            dst_path.parent.mkdir(parents=True, exist_ok=True)
-            shutil.move(str(src_path), str(dst_path))
-            revert_context["source_path"] = str(src_path)
-            revert_context["dest_path"] = str(dst_path)
+                if conflict_res == "skip":
+                    op_log.status = "skipped"
+                    op_log.error_message = f"Skipped: destination '{dst_path.name}' already exists"
+                    item.status = "skipped"
+                    return {"operation": "skip"}
+                elif conflict_res == "rename":
+                    dst_path, renamed = resolve_collision_path(dst_path, "rename")
+                    if renamed:
+                        item.destination_canonical_path = str(dst_path)
+                        item.destination_relative_path = dst_path.relative_to(
+                            Path(dst_folder.root_path).resolve()
+                        ).as_posix()
+                else:
+                    raise TransactionException(f"Destination collision: '{dst_path.name}' already exists (no silent overwrite permitted)")
+
+            is_cross_vol = (item.move_type == "cross_volume") or is_cross_volume_move(src_path, dst_path)
+
+            if not is_cross_vol:
+                # Same-volume move: atomic rename / move
+                dst_path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(src_path), str(dst_path))
+                revert_context["move_type"] = "same_volume"
+                revert_context["source_path"] = str(src_path)
+                revert_context["dest_path"] = str(dst_path)
+                revert_context["src_folder_id"] = src_folder.id
+                revert_context["dst_folder_id"] = dst_folder.id
+                self.audit_repo.record(
+                    action="same_volume_move",
+                    entity_type="change_plan_item",
+                    entity_id=item.id,
+                    actor_type="system",
+                    details={
+                        "source": str(src_path),
+                        "destination": str(dst_path),
+                        "move_type": "same_volume",
+                    },
+                )
+            else:
+                # Cross-volume move: staged copy -> verify -> commit -> quarantine
+                dst_path.parent.mkdir(parents=True, exist_ok=True)
+                staging_name = f".staging_{uuid.uuid4().hex[:8]}_{dst_path.name}"
+                staging_path = dst_path.parent / staging_name
+                revert_context["staging_path"] = str(staging_path)
+
+                self.audit_repo.record(
+                    action="cross_scope_move_staged",
+                    entity_type="change_plan_item",
+                    entity_id=item.id,
+                    actor_type="system",
+                    details={
+                        "source": str(src_path),
+                        "staging": str(staging_path),
+                        "destination": str(dst_path),
+                        "move_type": "cross_volume",
+                    },
+                )
+
+                try:
+                    # 1. Staged copy preserving metadata
+                    if src_path.is_dir():
+                        for root_dir, dirs, files in os.walk(src_path):
+                            for d in dirs:
+                                dp = Path(root_dir) / d
+                                if is_reparse_point_or_symlink(dp) or ProtectedPathRegistry.is_protected_path(dp):
+                                    raise TransactionException(f"Cannot move directory containing unsafe member: {dp}")
+                            for f in files:
+                                fp = Path(root_dir) / f
+                                if is_reparse_point_or_symlink(fp) or ProtectedPathRegistry.is_protected_path(fp):
+                                    raise TransactionException(f"Cannot move directory containing unsafe member: {fp}")
+                        shutil.copytree(str(src_path), str(staging_path), symlinks=False, copy_function=shutil.copy2)
+                    else:
+                        shutil.copy2(str(src_path), str(staging_path))
+
+                    # 2. Verification
+                    if src_path.is_file():
+                        src_size = src_path.stat().st_size
+                        stg_size = staging_path.stat().st_size
+                        if src_size != stg_size:
+                            raise TransactionException(
+                                f"Cross-volume verification failed: size mismatch (src={src_size}, stg={stg_size})"
+                            )
+                        src_hash = compute_file_sha256(src_path)
+                        stg_hash = compute_file_sha256(staging_path)
+                        if src_hash != stg_hash:
+                            raise TransactionException(
+                                f"Cross-volume verification failed: hash mismatch"
+                            )
+                    else:
+                        src_files = {p.relative_to(src_path): p for p in src_path.rglob("*") if p.is_file()}
+                        stg_files = {p.relative_to(staging_path): p for p in staging_path.rglob("*") if p.is_file()}
+                        if set(src_files.keys()) != set(stg_files.keys()):
+                            raise TransactionException("Cross-volume directory verification failed: file count/set mismatch")
+                        for rel_p, sf in src_files.items():
+                            tf = stg_files[rel_p]
+                            if sf.stat().st_size != tf.stat().st_size or compute_file_sha256(sf) != compute_file_sha256(tf):
+                                raise TransactionException(f"Cross-volume directory verification failed: mismatch on {rel_p}")
+
+                    self.audit_repo.record(
+                        action="cross_scope_move_verified",
+                        entity_type="change_plan_item",
+                        entity_id=item.id,
+                        actor_type="system",
+                        details={"status": "verified", "staging": str(staging_path)},
+                    )
+
+                    # 3. Destination commit: atomic rename on destination volume
+                    staging_path.rename(dst_path)
+                    self.audit_repo.record(
+                        action="cross_scope_move_committed",
+                        entity_type="change_plan_item",
+                        entity_id=item.id,
+                        actor_type="system",
+                        details={"committed_dest": str(dst_path)},
+                    )
+
+                    # 4. Source quarantine: safe reversible deletion
+                    _, quarantined_dest = send_to_recycle_bin(src_path)
+                    revert_context["move_type"] = "cross_volume"
+                    revert_context["source_path"] = str(src_path)
+                    revert_context["dest_path"] = str(dst_path)
+                    revert_context["src_folder_id"] = src_folder.id
+                    revert_context["dst_folder_id"] = dst_folder.id
+
+                    if quarantined_dest:
+                        op_log.backup_reference = f"local_quarantine:{quarantined_dest}"
+                        revert_context["quarantined_dest"] = str(quarantined_dest)
+                    else:
+                        op_log.backup_reference = "windows_recycle_bin"
+
+                    self.audit_repo.record(
+                        action="cross_scope_move_quarantined",
+                        entity_type="change_plan_item",
+                        entity_id=item.id,
+                        actor_type="system",
+                        details={
+                            "quarantined_dest": str(quarantined_dest) if quarantined_dest else "windows_recycle_bin",
+                            "source": str(src_path),
+                        },
+                    )
+
+                except Exception:
+                    if staging_path.exists():
+                        if staging_path.is_dir():
+                            shutil.rmtree(str(staging_path), ignore_errors=True)
+                        else:
+                            staging_path.unlink(missing_ok=True)
+                    raise
 
         elif op == OperationType.COPY.value:
             if not src_path or not dst_path:
@@ -828,16 +1187,44 @@ class TransactionManagerService:
                     target.unlink()
 
         elif op in (OperationType.RENAME.value, OperationType.MOVE.value):
-            src = Path(context["source_path"])
-            dst = Path(context["dest_path"])
-            is_same_file_case = (
-                src.name.lower() == dst.name.lower()
-                and src.parent.resolve() == dst.parent.resolve()
-            )
-            if is_same_file_case:
-                dst.rename(src)
-            elif dst.exists() and not src.exists():
-                shutil.move(str(dst), str(src))
+            if context.get("move_type") == "cross_volume":
+                dst = Path(context["dest_path"])
+                src = Path(context["source_path"])
+                quarantined = context.get("quarantined_dest")
+                stg = Path(context["staging_path"]) if context.get("staging_path") else None
+                if stg and stg.exists():
+                    if stg.is_dir():
+                        shutil.rmtree(str(stg), ignore_errors=True)
+                    else:
+                        stg.unlink(missing_ok=True)
+                if dst.exists():
+                    if dst.is_dir():
+                        shutil.rmtree(str(dst), ignore_errors=True)
+                    else:
+                        dst.unlink(missing_ok=True)
+                if quarantined:
+                    q_path = Path(quarantined)
+                    if q_path.exists() and not src.exists():
+                        src.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.move(str(q_path), str(src))
+                        self.audit_repo.record(
+                            action="cross_scope_move_rollback",
+                            entity_type="change_plan_item",
+                            entity_id=item.id,
+                            actor_type="system",
+                            details={"restored_source": str(src), "quarantine": str(q_path)},
+                        )
+            else:
+                src = Path(context["source_path"])
+                dst = Path(context["dest_path"])
+                is_same_file_case = (
+                    src.name.lower() == dst.name.lower()
+                    and src.parent.resolve() == dst.parent.resolve()
+                )
+                if is_same_file_case:
+                    dst.rename(src)
+                elif dst.exists() and not src.exists():
+                    shutil.move(str(dst), str(src))
 
         elif op == OperationType.DELETE_TO_RECYCLE_BIN.value:
             quarantined = context.get("quarantined_dest")
@@ -897,6 +1284,7 @@ class TransactionManagerService:
 
         # Also respect ChangePlanItem sequence order if available
         item_seq = {it.id: it.sequence_no for it in plan.items}
+        plan_items_by_id = {it.id: it for it in plan.items}
         op_logs.sort(key=lambda l: item_seq.get(l.change_plan_item_id, 0), reverse=True)
 
         reverted_count = 0
@@ -912,36 +1300,68 @@ class TransactionManagerService:
             op = op_log.operation
             src_rel = op_log.source_path_snapshot
             dst_rel = op_log.destination_path_snapshot
+            associated_item = plan_items_by_id.get(op_log.change_plan_item_id)
+
+            item_src_folder = (
+                self._get_managed_folder(associated_item.source_managed_folder_id or folder.id)
+                if associated_item
+                else folder
+            )
+            item_dst_folder = (
+                self._get_managed_folder(associated_item.destination_managed_folder_id or folder.id)
+                if associated_item
+                else folder
+            )
 
             try:
-                src_abs = PathValidator.resolve_and_verify_scope(folder, src_rel) if src_rel else None
-                dst_abs = PathValidator.resolve_and_verify_scope(folder, dst_rel) if dst_rel else None
+                src_abs = PathValidator.resolve_and_verify_scope(item_src_folder, src_rel) if src_rel else None
+                dst_abs = PathValidator.resolve_and_verify_scope(item_dst_folder, dst_rel) if dst_rel else None
 
                 if op in (OperationType.MOVE.value, OperationType.RENAME.value):
                     if not src_abs or not dst_abs:
                         skipped_count += 1
                         details.append(f"Skipped {op}: missing path snapshot.")
                         continue
-                    is_same_file_case = (
-                        src_abs.name.lower() == dst_abs.name.lower()
-                        and src_abs.parent.resolve() == dst_abs.parent.resolve()
-                    )
-                    if not dst_abs.exists():
-                        skipped_count += 1
-                        details.append(f"Skipped {op} '{dst_rel}': destination no longer exists.")
-                        continue
-                    if src_abs.exists() and not is_same_file_case:
-                        skipped_count += 1
-                        details.append(f"Skipped {op} '{dst_rel}' -> '{src_rel}': original source path already occupied.")
-                        continue
-                    src_abs.parent.mkdir(parents=True, exist_ok=True)
-                    if is_same_file_case:
-                        dst_abs.rename(src_abs)
+
+                    backup_ref = op_log.backup_reference or ""
+                    if backup_ref.startswith("local_quarantine:"):
+                        q_raw = backup_ref.split("local_quarantine:", 1)[1]
+                        q_path = Path(q_raw).resolve()
+                        if dst_abs.exists():
+                            if dst_abs.is_dir():
+                                shutil.rmtree(str(dst_abs), ignore_errors=True)
+                            else:
+                                dst_abs.unlink(missing_ok=True)
+                        if q_path.exists() and not src_abs.exists():
+                            src_abs.parent.mkdir(parents=True, exist_ok=True)
+                            shutil.move(str(q_path), str(src_abs))
+                            op_log.status = "rollback_completed"
+                            reverted_count += 1
+                            details.append(f"Reverted cross-volume {op}: restored '{src_rel}' from quarantine.")
+                        else:
+                            skipped_count += 1
+                            details.append(f"Skipped {op} '{src_rel}': quarantine backup missing.")
                     else:
-                        shutil.move(str(dst_abs), str(src_abs))
-                    op_log.status = "rollback_completed"
-                    reverted_count += 1
-                    details.append(f"Reverted {op}: '{dst_rel}' -> '{src_rel}'.")
+                        is_same_file_case = (
+                            src_abs.name.lower() == dst_abs.name.lower()
+                            and src_abs.parent.resolve() == dst_abs.parent.resolve()
+                        )
+                        if not dst_abs.exists():
+                            skipped_count += 1
+                            details.append(f"Skipped {op} '{dst_rel}': destination no longer exists.")
+                            continue
+                        if src_abs.exists() and not is_same_file_case:
+                            skipped_count += 1
+                            details.append(f"Skipped {op} '{dst_rel}' -> '{src_rel}': original source path already occupied.")
+                            continue
+                        src_abs.parent.mkdir(parents=True, exist_ok=True)
+                        if is_same_file_case:
+                            dst_abs.rename(src_abs)
+                        else:
+                            shutil.move(str(dst_abs), str(src_abs))
+                        op_log.status = "rollback_completed"
+                        reverted_count += 1
+                        details.append(f"Reverted {op}: '{dst_rel}' -> '{src_rel}'.")
 
                 elif op == OperationType.COPY.value:
                     if not dst_abs or not dst_abs.exists():
@@ -972,7 +1392,6 @@ class TransactionManagerService:
                     if backup_ref.startswith("local_quarantine:"):
                         q_raw = backup_ref.split("local_quarantine:", 1)[1]
                         q_path = Path(q_raw).resolve()
-                        # Ensure quarantine path is also strictly inside the managed folder
                         folder_root = Path(folder.root_path).resolve()
                         if folder_root not in q_path.parents:
                             raise TransactionException("Quarantine path escapes Managed Folder boundary.")
@@ -1094,30 +1513,54 @@ class TransactionManagerService:
 
     def quick_move(self, payload: QuickMoveRequest) -> ExecutionJobResponse:
         """Moves items to a destination directory through the Transaction Manager."""
-        folder = self._get_managed_folder(payload.managed_folder_id)
+        src_folder = self._get_managed_folder(payload.managed_folder_id)
+        dst_folder = (
+            self._get_managed_folder(payload.destination_managed_folder_id)
+            if payload.destination_managed_folder_id
+            else src_folder
+        )
         dest_dir = payload.destination_directory_relative_path.strip().strip("/\\")
         if dest_dir:
-            PathValidator.resolve_and_verify_scope(folder, dest_dir)
+            PathValidator.resolve_and_verify_scope(dst_folder, dest_dir)
         for rel in payload.source_relative_paths:
-            PathValidator.resolve_and_verify_scope(folder, rel)
+            PathValidator.resolve_and_verify_scope(src_folder, rel)
 
         items: List[ChangePlanItemCreate] = []
-        for idx, src_rel in enumerate(payload.source_relative_paths, start=1):
+        seq = 1
+        if dest_dir:
+            dest_dir_abs = Path(dst_folder.root_path) / dest_dir
+            if not dest_dir_abs.exists():
+                items.append(
+                    ChangePlanItemCreate(
+                        operation=OperationType.CREATE_DIRECTORY,
+                        destination_managed_folder_id=dst_folder.id,
+                        destination_relative_path=dest_dir,
+                        sequence_no=seq,
+                    )
+                )
+                seq += 1
+
+        for src_rel in payload.source_relative_paths:
             name = Path(src_rel).name
             dst_rel = f"{dest_dir}/{name}".strip("/") if dest_dir else name
             items.append(
                 ChangePlanItemCreate(
                     operation=OperationType.MOVE,
+                    source_managed_folder_id=src_folder.id,
+                    destination_managed_folder_id=dst_folder.id,
                     source_relative_path=src_rel,
                     destination_relative_path=dst_rel,
-                    sequence_no=idx,
+                    conflict_resolution=payload.conflict_resolution or "fail",
+                    sequence_no=seq,
                 )
             )
+            seq += 1
 
+        title_dest = f"{dst_folder.name}/{dest_dir}" if dest_dir else dst_folder.name
         plan = self.create_plan(
             ChangePlanCreate(
-                managed_folder_id=folder.id,
-                title=f"Move {len(items)} item(s) to {dest_dir or 'root'}",
+                managed_folder_id=src_folder.id,
+                title=f"Move {len(items)} item(s) to {title_dest}",
                 plan_type=PlanType.MANUAL,
                 items=items,
             ),

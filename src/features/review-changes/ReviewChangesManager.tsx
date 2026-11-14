@@ -1220,8 +1220,27 @@ export const ReviewChangesManager: React.FC = () => {
                                   <td className={`${rowPad} text-center text-muted-foreground font-mono text-[11px]`}>
                                     #{entry.item.sequence_no}
                                   </td>
-                                  <td className={`${rowPad}`}>{getOpBadge(entry.item.operation)}</td>
+                                  <td className={`${rowPad}`}>
+                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                      {getOpBadge(entry.item.operation)}
+                                      {entry.item.move_type === "cross_volume" && (
+                                        <span className="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20">
+                                          Cross-Drive
+                                        </span>
+                                      )}
+                                      {entry.item.move_type === "same_volume" && entry.item.destination_managed_folder_id && entry.item.destination_managed_folder_id !== entry.item.source_managed_folder_id && (
+                                        <span className="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20">
+                                          Cross-Folder
+                                        </span>
+                                      )}
+                                    </div>
+                                  </td>
                                   <td className={`${rowPad} font-mono text-foreground min-w-[120px] max-w-[200px] xl:max-w-[320px]`}>
+                                    {entry.item.source_managed_folder_name && (
+                                      <span className="text-[10px] text-muted-foreground block font-sans truncate">
+                                        [{entry.item.source_managed_folder_name}]
+                                      </span>
+                                    )}
                                     <span
                                       title={entry.item.source_relative_path || "(Directory)"}
                                       className="truncate block"
@@ -1232,6 +1251,11 @@ export const ReviewChangesManager: React.FC = () => {
                                     </span>
                                   </td>
                                   <td className={`${rowPad} font-mono text-foreground min-w-[120px] max-w-[200px] xl:max-w-[320px]`}>
+                                    {entry.item.destination_managed_folder_name && (
+                                      <span className="text-[10px] text-primary/80 block font-sans truncate font-medium">
+                                        [{entry.item.destination_managed_folder_name}]
+                                      </span>
+                                    )}
                                     <span
                                       title={entry.item.destination_relative_path || "(Recycle Bin)"}
                                       className="truncate block"
@@ -1480,8 +1504,22 @@ export const ReviewChangesManager: React.FC = () => {
                   <div className="font-medium text-foreground truncate" title={activeSelectedItem.planTitle}>
                     {activeSelectedItem.planTitle}
                   </div>
-                  <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
-                    <span>Folder: {getFolderName(activeSelectedItem.managedFolderId)}</span>
+                  <div className="flex items-center gap-2 text-[11px] text-muted-foreground flex-wrap">
+                    <span>From: {activeSelectedItem.item.source_managed_folder_name || getFolderName(activeSelectedItem.managedFolderId)}</span>
+                    {activeSelectedItem.item.destination_managed_folder_name && (
+                      <>
+                        <span>→</span>
+                        <span className="font-medium text-foreground">To: {activeSelectedItem.item.destination_managed_folder_name}</span>
+                      </>
+                    )}
+                    {activeSelectedItem.item.move_type && (
+                      <>
+                        <span>•</span>
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-purple-500/10 text-purple-600 dark:text-purple-400">
+                          {activeSelectedItem.item.move_type === "cross_volume" ? "Cross-Drive" : "Same-Drive"}
+                        </span>
+                      </>
+                    )}
                     <span>•</span>
                     <span className="flex items-center gap-1">
                       {activeSelectedItem.created_by === "ai" ? (
