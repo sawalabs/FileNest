@@ -1,6 +1,7 @@
 from typing import Any, Dict, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import FileResponse, Response
+from pydantic import BaseModel, Field
 
 from backend.app.api.deps import get_filesystem_service
 from backend.app.schemas.filesystem import (
@@ -15,6 +16,31 @@ from backend.app.services.managed_folder import ManagedFolderException
 router = APIRouter()
 
 MAX_SAFE_IMAGE_PIXELS = 50_000_000  # 50 MP limit against image decompression bomb
+
+
+class OpenExplorerRequest(BaseModel):
+    folder_id: str = Field(..., description="ID of the Managed Folder")
+    relative_path: str = Field(default="", description="Optional relative path inside the Managed Folder")
+
+
+@router.post(
+    "/open-explorer",
+    summary="Open a registered Managed Folder or relative subfolder in File Explorer",
+)
+def open_in_explorer(
+    payload: OpenExplorerRequest,
+    service: FilesystemService = Depends(get_filesystem_service),
+) -> Dict[str, Any]:
+    try:
+        return service.open_in_explorer(
+            managed_folder_id=payload.folder_id,
+            relative_path=payload.relative_path,
+        )
+    except ManagedFolderException as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
 
 
 @router.get(

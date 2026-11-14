@@ -81,6 +81,7 @@ export const DashboardManager: React.FC<DashboardManagerProps> = ({ onNavigate }
         root_path: selectedPath,
       });
 
+      window.dispatchEvent(new Event("folders-changed"));
       setSuccessBanner(`Folder "${folderName}" berhasil didaftarkan.`);
       setTimeout(() => setSuccessBanner(null), 4000);
       fetchDashboardData(true);
@@ -119,11 +120,18 @@ export const DashboardManager: React.FC<DashboardManagerProps> = ({ onNavigate }
     }
   };
 
-  const handleOpenFolderInExplorer = (rootPath: string) => {
+  const handleOpenFolderInExplorer = async (rootPath: string) => {
+    const matchedFolder = data?.managed_folders.find((f) => f.root_path === rootPath);
+    if (!matchedFolder) {
+      setError("Folder tidak ditemukan dalam daftar folder kelolaan.");
+      return;
+    }
     try {
-      window.open(`file:///${rootPath.replace(/\\/g, "/")}`);
-    } catch {
-      // Ignored
+      await ApiService.openInExplorer(matchedFolder.id);
+      setSuccessBanner(`Membuka "${matchedFolder.name}" di File Explorer.`);
+      setTimeout(() => setSuccessBanner(null), 3000);
+    } catch (err: any) {
+      setError(err.message || "Gagal membuka folder di File Explorer.");
     }
   };
 
@@ -131,6 +139,7 @@ export const DashboardManager: React.FC<DashboardManagerProps> = ({ onNavigate }
     if (!folderToRemove) return;
     try {
       await ApiService.unregisterFolder(folderToRemove.id);
+      window.dispatchEvent(new Event("folders-changed"));
       setSuccessBanner(`Folder "${folderToRemove.name}" berhasil dihapus dari kelolaan.`);
       setFolderToRemove(null);
       setTimeout(() => setSuccessBanner(null), 3000);
@@ -304,7 +313,7 @@ export const DashboardManager: React.FC<DashboardManagerProps> = ({ onNavigate }
               <div className="grid grid-cols-2 gap-3 my-auto py-2">
                 <div className="p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
                   <span className="text-xs text-emerald-700 dark:text-emerald-400 font-bold block">
-                    +248
+                    +{data.changes_7d?.files_added ?? 0}
                   </span>
                   <span className="text-[11px] text-muted-foreground">
                     File Ditambahkan
@@ -312,7 +321,7 @@ export const DashboardManager: React.FC<DashboardManagerProps> = ({ onNavigate }
                 </div>
                 <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/20">
                   <span className="text-xs text-amber-700 dark:text-amber-400 font-bold block">
-                    132
+                    {data.changes_7d?.files_renamed ?? 0}
                   </span>
                   <span className="text-[11px] text-muted-foreground">
                     File Diubah Nama
@@ -320,7 +329,7 @@ export const DashboardManager: React.FC<DashboardManagerProps> = ({ onNavigate }
                 </div>
                 <div className="p-3 rounded-lg bg-blue-500/10 border border-blue-500/20">
                   <span className="text-xs text-blue-700 dark:text-blue-400 font-bold block">
-                    24
+                    {data.changes_7d?.files_moved ?? 0}
                   </span>
                   <span className="text-[11px] text-muted-foreground">
                     File Dipindahkan
@@ -328,7 +337,7 @@ export const DashboardManager: React.FC<DashboardManagerProps> = ({ onNavigate }
                 </div>
                 <div className="p-3 rounded-lg bg-rose-500/10 border border-rose-500/20">
                   <span className="text-xs text-rose-700 dark:text-rose-400 font-bold block">
-                    0
+                    {data.changes_7d?.files_deleted ?? 0}
                   </span>
                   <span className="text-[11px] text-muted-foreground">
                     File Dihapus

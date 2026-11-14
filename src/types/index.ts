@@ -920,6 +920,13 @@ export interface DashboardStorageTrendPointData {
   files_deleted: number;
 }
 
+export interface DashboardChanges7dData {
+  files_added: number;
+  files_renamed: number;
+  files_moved: number;
+  files_deleted: number;
+}
+
 export interface DashboardOverviewResponse {
   summary_cards: DashboardSummaryCardsData;
   storage_categories: DashboardCategoryItemData[];
@@ -929,6 +936,7 @@ export interface DashboardOverviewResponse {
   recommendations: DashboardRecommendationItemData[];
   jobs: DashboardJobItemData[];
   storage_history: DashboardStorageTrendPointData[];
+  changes_7d?: DashboardChanges7dData;
   is_stale: boolean;
   last_refreshed_at: string;
 }

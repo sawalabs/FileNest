@@ -120,25 +120,6 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({
     };
   }, [isOpen, item, managedFolderId, isImage, isTextOrCode]);
 
-  if (!isOpen || !item) return null;
-
-  const fullPath = `${managedFolderRoot}\\${item.relative_path.replace(/\//g, "\\")}`;
-
-  const formatSize = (bytes: number) => {
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-    if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-    return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
-  };
-
-  const handleCopyText = () => {
-    if (textContent) {
-      navigator.clipboard.writeText(textContent);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    }
-  };
-
   const handleRunOCR = async () => {
     if (!managedFolderId || !item) return;
     setActiveTab("ocr");
@@ -164,6 +145,25 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({
       handleRunOCR();
     }
   }, [isOpen, item, managedFolderId, initialTab, isOCREligible]);
+
+  if (!isOpen || !item) return null;
+
+  const fullPath = `${managedFolderRoot}\\${item.relative_path.replace(/\//g, "\\")}`;
+
+  const formatSize = (bytes: number) => {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+  };
+
+  const handleCopyText = () => {
+    if (textContent) {
+      navigator.clipboard.writeText(textContent);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
 
   const handleCopyOcr = () => {
     if (ocrResult?.full_text) {

@@ -65,7 +65,7 @@ export const StorageUsageDonut: React.FC<StorageUsageDonutProps> = ({
           </p>
         </div>
       ) : (
-        <div className="mt-4 flex flex-col md:flex-row items-center gap-6">
+        <div className="mt-4 flex flex-col 2xl:flex-row items-center gap-4">
           {/* Donut Chart */}
           <div className="relative w-44 h-44 flex-shrink-0">
             <ResponsiveContainer width="100%" height="100%">
@@ -122,18 +122,18 @@ export const StorageUsageDonut: React.FC<StorageUsageDonutProps> = ({
                   tabIndex={0}
                   onClick={() => onSelectCategory(cat.category)}
                   onKeyDown={(e) => e.key === "Enter" && onSelectCategory(cat.category)}
-                  className="flex items-center justify-between text-xs p-1.5 rounded-md hover:bg-muted/60 transition-colors cursor-pointer group"
+                  className="flex items-center justify-between gap-2 text-xs p-1.5 rounded-md hover:bg-muted/60 transition-colors cursor-pointer group"
                 >
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 min-w-0 flex-1">
                     <span
                       className="w-2.5 h-2.5 rounded-full flex-shrink-0"
                       style={{ backgroundColor: color }}
                     />
-                    <span className="font-medium text-foreground group-hover:text-primary transition-colors">
+                    <span className="font-medium text-foreground group-hover:text-primary transition-colors truncate">
                       {cat.category}
                     </span>
                   </div>
-                  <div className="flex items-center gap-3 text-muted-foreground">
+                  <div className="flex items-center gap-2.5 text-muted-foreground shrink-0 whitespace-nowrap">
                     <span>{formatBytes(cat.total_size_bytes)}</span>
                     <span className="font-semibold w-10 text-right text-foreground/80">
                       {cat.percentage}%

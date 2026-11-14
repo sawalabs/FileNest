@@ -341,6 +341,25 @@ export class ApiService {
     return response.json();
   }
 
+  public static async openInExplorer(
+    folderId: string,
+    relativePath = ""
+  ): Promise<{ opened: boolean; path: string }> {
+    const response = await fetch(`${this.baseUrl}/api/v1/fs/open-explorer`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        folder_id: folderId,
+        relative_path: relativePath,
+      }),
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.detail || `Failed to open Explorer: HTTP ${response.status}`);
+    }
+    return response.json();
+  }
+
   // ---------------------------------------------------------------------------
   // Transaction Manager Quick Operations
   // ---------------------------------------------------------------------------

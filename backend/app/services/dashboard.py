@@ -8,14 +8,16 @@ from sqlalchemy.orm import Session
 
 from backend.app.db.models.audit import AuditLog
 from backend.app.db.models.change_plan import ChangePlan
-from backend.app.db.models.execution import ExecutionJob
+from backend.app.db.models.execution import ExecutionJob, OperationLog
 from backend.app.db.models.file import FileRecord
 from backend.app.db.models.managed_folder import ManagedFolder
+from backend.app.db.models.monitoring import MonitoringEvent
 from backend.app.db.models.scan_job import ScanJob
 from backend.app.db.models.analysis_run import AnalysisRun
 from backend.app.schemas.dashboard import (
     DashboardAnalyzeRequest,
     DashboardCategoryItem,
+    DashboardChanges7d,
     DashboardFolderDistributionItem,
     DashboardJobItem,
     DashboardManagedFolderItem,
@@ -401,6 +403,34 @@ class DashboardService:
                     is_stale = True
                     break
 
+        # 10. Real 7-day mutation counts from SQLite OperationLog and MonitoringEvent
+        seven_days_ago = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+        recent_ops = (
+            self.db.query(OperationLog.operation, func.count(OperationLog.id))
+            .filter(
+                OperationLog.status == "completed",
+                OperationLog.started_at >= seven_days_ago,
+            )
+            .group_by(OperationLog.operation)
+            .all()
+        )
+        op_counts: Dict[str, int] = {op: int(cnt) for op, cnt in recent_ops}
+        monitored_created_7d = (
+            self.db.query(func.count(MonitoringEvent.id))
+            .filter(
+                MonitoringEvent.event_type == "created",
+                MonitoringEvent.occurred_at >= seven_days_ago,
+            )
+            .scalar()
+            or 0
+        )
+        changes_7d = DashboardChanges7d(
+            files_added=op_counts.get("create_directory", 0) + op_counts.get("copy", 0) + int(monitored_created_7d),
+            files_renamed=op_counts.get("rename", 0),
+            files_moved=op_counts.get("move", 0),
+            files_deleted=op_counts.get("delete_to_recycle_bin", 0),
+        )
+
         return DashboardOverviewResponse(
             summary_cards=summary_cards,
             storage_categories=categories,
@@ -410,6 +440,7 @@ class DashboardService:
             recommendations=recommendations,
             jobs=jobs,
             storage_history=storage_history,
+            changes_7d=changes_7d,
             is_stale=is_stale,
             last_refreshed_at=now_iso,
         )
