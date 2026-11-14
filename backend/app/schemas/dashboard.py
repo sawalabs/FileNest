@@ -79,6 +79,13 @@ class DashboardStorageTrendPoint(BaseModel):
     files_deleted: int = 0
 
 
+class DashboardChanges7d(BaseModel):
+    files_added: int = Field(0, description="Files added or created in the last 7 days")
+    files_renamed: int = Field(0, description="Files renamed in the last 7 days")
+    files_moved: int = Field(0, description="Files moved in the last 7 days")
+    files_deleted: int = Field(0, description="Files moved to Recycle Bin in the last 7 days")
+
+
 class DashboardOverviewResponse(BaseModel):
     summary_cards: DashboardSummaryCards
     storage_categories: List[DashboardCategoryItem] = []
@@ -88,6 +95,7 @@ class DashboardOverviewResponse(BaseModel):
     recommendations: List[DashboardRecommendationItem] = []
     jobs: List[DashboardJobItem] = []
     storage_history: List[DashboardStorageTrendPoint] = []
+    changes_7d: DashboardChanges7d = Field(default_factory=DashboardChanges7d)
     is_stale: bool = False
     last_refreshed_at: str
 

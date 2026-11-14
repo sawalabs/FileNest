@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import re
 import shutil
 import stat
 import uuid
@@ -1456,12 +1457,23 @@ class TransactionManagerService:
     # Quick / Direct Actions for UI
     # -------------------------------------------------------------------------
 
+    @staticmethod
+    def _validate_filename_segment(name: str, label: str = "Filename") -> None:
+        """Validates a filename or folder name against invalid Windows characters before plan creation."""
+        if not name or not name.strip():
+            raise TransactionException(f"{label} cannot be empty")
+        if re.search(r'[<>:"|?*\x00-\x1f]', name):
+            raise TransactionException(
+                f"{label} contains invalid Windows characters (< > : \" | ? * or control chars): '{name}'"
+            )
+
     def quick_create_directory(self, payload: QuickFolderCreateRequest) -> ExecutionJobResponse:
         """Creates a single directory through the Transaction Manager."""
         folder = self._get_managed_folder(payload.managed_folder_id)
         parent = payload.parent_relative_path.strip().strip("/\\")
         dest_rel = f"{parent}/{payload.folder_name}".strip("/") if parent else payload.folder_name
         PathValidator.resolve_and_verify_scope(folder, dest_rel)
+        self._validate_filename_segment(payload.folder_name, label="Folder name")
 
         plan = self.create_plan(
             ChangePlanCreate(
@@ -1490,6 +1502,7 @@ class TransactionManagerService:
         dst_rel = f"{parent}/{payload.new_name}".strip("/") if parent != "." else payload.new_name
         PathValidator.resolve_and_verify_scope(folder, src_rel)
         PathValidator.resolve_and_verify_scope(folder, dst_rel)
+        self._validate_filename_segment(payload.new_name, label="New filename")
 
         plan = self.create_plan(
             ChangePlanCreate(

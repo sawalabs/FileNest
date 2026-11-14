@@ -631,8 +631,8 @@ export const FilesManager: React.FC<FilesManagerProps> = ({
       const targetTag = (e.target as HTMLElement)?.tagName?.toLowerCase();
       const isInput = targetTag === "input" || targetTag === "textarea" || targetTag === "select";
 
-      // Ctrl + K: Focus Search
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+      // Ctrl + F: Focus Search (leave Ctrl + K for global Command Palette)
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f") {
         e.preventDefault();
         searchInputRef.current?.focus();
         return;
@@ -1162,7 +1162,7 @@ export const FilesManager: React.FC<FilesManagerProps> = ({
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search files... (Ctrl + K)"
+                placeholder="Search files... (Ctrl + F)"
                 className="w-full pl-8 pr-7 py-1 rounded-md border border-input bg-background text-xs focus:outline-none focus:ring-1 focus:ring-primary"
               />
               {searchQuery && (

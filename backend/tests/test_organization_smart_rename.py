@@ -334,5 +334,7 @@ async def test_quick_ocr_suggest_endpoint(async_client: AsyncClient, tmp_path: P
     assert data["original_name"] == "scan_unknown_001.png"
     assert len(data["proposed_name"]) > 0
     assert data["proposed_name"].endswith(".png")
+    assert "9router" not in data["proposed_name"].lower()
+    assert "offline" not in data["proposed_name"].lower()
 
 

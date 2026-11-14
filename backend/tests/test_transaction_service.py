@@ -274,3 +274,43 @@ async def test_quick_actions(async_client: AsyncClient, tmp_path: Path):
     )
     assert d_res.status_code == 200
     assert not (folder_root / "NewSub" / "renamed_file.txt").exists()
+
+
+@pytest.mark.asyncio
+async def test_quick_actions_reject_invalid_windows_characters_pre_execution(
+    async_client: AsyncClient, tmp_path: Path
+):
+    folder_root = tmp_path / "InvalidCharsFolder"
+    folder_root.mkdir()
+    (folder_root / "sample.txt").write_text("hello")
+
+    reg_res = await async_client.post(
+        "/api/v1/folders/register",
+        json={"name": "Invalid Chars", "root_path": str(folder_root)},
+    )
+    folder_id = reg_res.json()["id"]
+
+    # Illegal characters in new folder name
+    f_res = await async_client.post(
+        "/api/v1/transactions/quick/create-folder",
+        json={
+            "managed_folder_id": folder_id,
+            "parent_relative_path": "",
+            "folder_name": "bad<name>",
+        },
+    )
+    assert f_res.status_code == 400
+    assert "invalid windows characters" in f_res.json()["detail"].lower()
+
+    # Illegal characters in new filename
+    r_res = await async_client.post(
+        "/api/v1/transactions/quick/rename",
+        json={
+            "managed_folder_id": folder_id,
+            "source_relative_path": "sample.txt",
+            "new_name": "invalid?.txt",
+        },
+    )
+    assert r_res.status_code == 400
+    assert "invalid windows characters" in r_res.json()["detail"].lower()
+    assert (folder_root / "sample.txt").exists()
