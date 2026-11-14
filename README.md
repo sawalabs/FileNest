@@ -7,8 +7,11 @@
 [![Database](https://img.shields.io/badge/SQLite-WAL%20Mode-003B57?logo=sqlite)](https://www.sqlite.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Support on Trakteer](https://img.shields.io/badge/Support-Trakteer-be1e2d?logo=ko-fi&logoColor=white)](https://trakteer.id/iman_fauzi9)
+![Built with AI](https://img.shields.io/badge/Built%20with%20AI-100%25-8A2BE2)
 
 **FileNest** is a production-ready Windows desktop application for analyzing, organizing, monitoring, and safely managing local storage and files with AI-assisted planning. Built on **Tauri 2 (Rust)**, **React 18 + TypeScript**, and a local **FastAPI (Python)** backend, FileNest combines deterministic filesystem safety, transactional change plans with rollback, hybrid OCR, and privacy-first AI gateway integration.
+
+> **100% Built with AI:** This entire project—including architecture, desktop shell, frontend UI, FastAPI backend, security hardening, tests, and documentation—was built 100% using AI.
 
 > **Safety First:** AI models only analyze metadata and generate structured change plans. The frontend has zero direct filesystem access—every mutation is validated, approved, executed, and audited by the backend **Transaction Manager** strictly inside user-registered **Managed Folders**.
 
