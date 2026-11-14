@@ -546,10 +546,17 @@ export const FilesManager: React.FC<FilesManagerProps> = ({
         title: "Select Directory to Register as Managed Folder",
       });
       if (selected && typeof selected === "string") {
-        const autoName = selected.split(/[\\/]/).filter(Boolean).pop() || "Managed Folder";
+        const cleanPath = selected.trim();
+        const isDrive = /^[a-zA-Z]:[\\/]?$/.test(cleanPath);
+        const driveLetter = cleanPath.slice(0, 2).toUpperCase();
+        const autoName = isDrive
+          ? `Local Disk (${driveLetter})`
+          : cleanPath.split(/[\\/]/).filter(Boolean).pop() || "Managed Folder";
+
         const created = await ApiService.registerFolder({
           name: autoName,
-          root_path: selected,
+          root_path: cleanPath,
+          root_type: isDrive ? "drive" : "directory",
           monitoring_enabled: false,
           scan_on_startup: false,
           exclude_patterns: [],
@@ -560,8 +567,9 @@ export const FilesManager: React.FC<FilesManagerProps> = ({
         navigateTo("");
         window.dispatchEvent(new Event("folders-changed"));
       }
-    } catch {
-      showToast("Gunakan menu Managed Folders di Settings untuk mendaftarkan folder.");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Gagal mendaftarkan folder";
+      showToast(`Gagal: ${msg}`);
     }
   };
 

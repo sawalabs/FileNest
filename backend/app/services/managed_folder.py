@@ -354,13 +354,11 @@ class PathValidator:
             if cls.is_protected_path(path):
                 raise ManagedFolderException(f"Drive root targets a protected system directory: {path}")
 
-            # Check duplicate and overlap with existing registered folders
+            # Check duplicate with existing registered folders
             for existing in existing_folders:
                 existing_path = Path(existing.root_path).resolve()
                 if path == existing_path:
                     raise ManagedFolderException(f"Drive root is already registered: {path}")
-                if path in existing_path.parents:
-                    raise ManagedFolderException(f"Drive root contains already registered folder '{existing.name}': {existing_path}")
 
             return path
 
@@ -472,7 +470,13 @@ class ManagedFolderService:
         stmt = select(ManagedFolder)
         existing_folders = list(self.db.execute(stmt).scalars().all())
 
-        root_type = getattr(payload, "root_type", "directory") or "directory"
+        raw_path_str = str(payload.root_path).strip() if payload.root_path else ""
+        norm_drive = normalize_drive_root(raw_path_str) if raw_path_str else ""
+        if is_drive_root_path(norm_drive) or is_drive_root_path(raw_path_str):
+            root_type = "drive"
+        else:
+            root_type = getattr(payload, "root_type", "directory") or "directory"
+
         # Canonical path validation
         canonical_path = PathValidator.validate_new_root_path(
             payload.root_path,
@@ -490,8 +494,24 @@ class ManagedFolderService:
             default_label = f"Local Disk ({drive_letter})" if dtype == "fixed" else f"Drive ({drive_letter})"
             vol_label = vol_label or ident.get("volume_label") or default_label
             vol_serial = ident.get("volume_serial")
-            if not payload.name or payload.name == "Managed Folder":
+            if not payload.name or payload.name in ("Managed Folder", "Folder Baru", "New Folder", drive_letter):
                 payload.name = default_label
+
+            # Deduplicate any existing child folders inside this drive root
+            canonical_drive = canonical_path
+            descendants = [
+                f for f in existing_folders
+                if canonical_drive in Path(f.root_path).resolve().parents
+            ]
+            for child in descendants:
+                self.audit_repo.record(
+                    actor_type="system",
+                    action="folder_subsumed",
+                    entity_type="managed_folder",
+                    entity_id=child.id,
+                    details=f"Folder '{child.name}' ({child.root_path}) subsumed by drive root '{canonical_drive}' registration",
+                )
+                self.db.delete(child)
 
 
         folder = ManagedFolder(

@@ -170,6 +170,47 @@ async def test_overlap_detection_between_drive_and_subfolder(async_client: Async
 
 
 @pytest.mark.asyncio
+async def test_drive_registration_auto_subsumes_existing_child_folders(async_client: AsyncClient, tmp_path: Path):
+    """FNE-11: Registering a drive root when child folder exists must auto-promote root_type and subsume child folder."""
+    drives = DriveService.list_available_drives()
+    drive = drives[0]
+    drive_path = drive.root_path
+
+    # Only test if tmp_path is on the same drive
+    if Path(drive_path).drive.upper() != tmp_path.drive.upper():
+        pytest.skip("tmp_path not on the same drive as discovered host drive")
+
+    child_dir = tmp_path / "ExistingChildFolder"
+    child_dir.mkdir(parents=True, exist_ok=True)
+
+    # 1. Register child folder first
+    r1 = await async_client.post(
+        "/api/v1/folders/register",
+        json={"name": "Existing Child", "root_path": str(child_dir)},
+    )
+    assert r1.status_code == 201
+    child_id = r1.json()["id"]
+
+    try:
+        # 2. Register drive root without specifying root_type (auto-detected as drive and subsumes child)
+        r2 = await async_client.post(
+            "/api/v1/folders/register",
+            json={"name": f"Drive {drive.drive_letter}", "root_path": drive_path},
+        )
+        assert r2.status_code == 201
+        drive_id = r2.json()["id"]
+        assert r2.json()["root_type"] == "drive"
+
+        # 3. Verify child folder was subsumed (no longer in folder list)
+        list_res = await async_client.get("/api/v1/folders")
+        ids = [f["id"] for f in list_res.json()]
+        assert child_id not in ids
+        assert drive_id in ids
+    finally:
+        await async_client.delete(f"/api/v1/folders/{drive_id}")
+
+
+@pytest.mark.asyncio
 async def test_scope_enforcement_rejects_protected_targets(tmp_path: Path):
     """FNE-7: PathValidator.resolve_and_verify_scope must reject targets resolving to protected OS paths."""
     # Create a mock drive folder

@@ -102,10 +102,17 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
 
       if (!selectedPath) return;
 
-      const folderName = selectedPath.split(/[\\/]/).filter(Boolean).pop() || "New Folder";
+      const cleanPath = selectedPath.trim();
+      const isDrive = /^[a-zA-Z]:[\\/]?$/.test(cleanPath);
+      const driveLetter = cleanPath.slice(0, 2).toUpperCase();
+      const folderName = isDrive
+        ? `Local Disk (${driveLetter})`
+        : cleanPath.split(/[\\/]/).filter(Boolean).pop() || "New Folder";
+
       const created = await ApiService.registerFolder({
         name: folderName,
-        root_path: selectedPath,
+        root_path: cleanPath,
+        root_type: isDrive ? "drive" : "directory",
       });
 
       await loadFolders();
@@ -116,6 +123,8 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
       onNavigate("files");
     } catch (err: unknown) {
       console.error("Failed to add folder:", err);
+      const msg = err instanceof Error ? err.message : String(err);
+      alert(`Gagal menambahkan folder atau drive:\n${msg}`);
     }
   };
 

@@ -75,10 +75,17 @@ export const DashboardManager: React.FC<DashboardManagerProps> = ({ onNavigate }
 
       if (!selectedPath) return;
 
-      const folderName = selectedPath.split(/[\\/]/).filter(Boolean).pop() || "Folder Baru";
+      const cleanPath = selectedPath.trim();
+      const isDrive = /^[a-zA-Z]:[\\/]?$/.test(cleanPath);
+      const driveLetter = cleanPath.slice(0, 2).toUpperCase();
+      const folderName = isDrive
+        ? `Local Disk (${driveLetter})`
+        : cleanPath.split(/[\\/]/).filter(Boolean).pop() || "Folder Baru";
+
       await ApiService.registerFolder({
         name: folderName,
-        root_path: selectedPath,
+        root_path: cleanPath,
+        root_type: isDrive ? "drive" : "directory",
       });
 
       window.dispatchEvent(new Event("folders-changed"));

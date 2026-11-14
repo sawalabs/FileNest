@@ -104,6 +104,7 @@ const fetch = fetchWithToken;
 export interface RegisterFolderPayload {
   name: string;
   root_path: string;
+  root_type?: "directory" | "drive";
   monitoring_enabled?: boolean;
   scan_on_startup?: boolean;
   exclude_patterns?: string[];
