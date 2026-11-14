@@ -6,6 +6,7 @@
 [![Backend](https://img.shields.io/badge/FastAPI-Python%203.11%2B-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![Database](https://img.shields.io/badge/SQLite-WAL%20Mode-003B57?logo=sqlite)](https://www.sqlite.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Support on Trakteer](https://img.shields.io/badge/Support-Trakteer-be1e2d?logo=ko-fi&logoColor=white)](https://trakteer.id/iman_fauzi9)
 
 **FileNest** is a production-ready Windows desktop application for analyzing, organizing, monitoring, and safely managing local storage and files with AI-assisted planning. Built on **Tauri 2 (Rust)**, **React 18 + TypeScript**, and a local **FastAPI (Python)** backend, FileNest combines deterministic filesystem safety, transactional change plans with rollback, hybrid OCR, and privacy-first AI gateway integration.
 
@@ -249,6 +250,16 @@ For detailed operational, database backup, and deployment procedures, see [docs/
 ├── requirements.txt            # Python dependencies
 └── run-desktop.bat             # Development desktop launcher
 ```
+
+---
+
+## Support
+
+If you find **FileNest** helpful and would like to support its continued development:
+
+[![Support on Trakteer](https://img.shields.io/badge/Trakteer-Support%20Creator-be1e2d?style=for-the-badge&logo=ko-fi&logoColor=white)](https://trakteer.id/iman_fauzi9)
+
+- Trakteer: [https://trakteer.id/iman_fauzi9](https://trakteer.id/iman_fauzi9)
 
 ---
 
