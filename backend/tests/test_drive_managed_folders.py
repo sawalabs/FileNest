@@ -319,3 +319,45 @@ async def test_drive_health_and_serial_revalidation(async_client: AsyncClient):
     finally:
         await async_client.delete(f"/api/v1/folders/{folder_id}")
 
+
+@pytest.mark.asyncio
+async def test_re_register_unregistered_drive_root(async_client: AsyncClient):
+    """Verifies that an unregistered (soft-deleted) drive root can be registered again without duplicate error."""
+    drives = DriveService.list_available_drives()
+    drive = drives[0]
+    drive_path = drive.root_path
+
+    # 1. Register drive
+    r1 = await async_client.post(
+        "/api/v1/folders/register",
+        json={"name": "Test Drive", "root_path": drive_path, "root_type": "drive"},
+    )
+    assert r1.status_code == 201
+    f_id = r1.json()["id"]
+
+    try:
+        # 2. Unregister without permanent=true (sets is_enabled = 0)
+        del_res = await async_client.delete(f"/api/v1/folders/{f_id}")
+        assert del_res.status_code == 200
+
+        # Verify not in enabled folders
+        folders_res = await async_client.get("/api/v1/folders?only_enabled=true")
+        assert not any(f["id"] == f_id for f in folders_res.json())
+
+        # 3. Re-register the drive root
+        r2 = await async_client.post(
+            "/api/v1/folders/register",
+            json={"name": "Re-added Drive", "root_path": drive_path},
+        )
+        assert r2.status_code == 201
+        assert r2.json()["id"] == f_id
+        assert r2.json()["name"] == "Re-added Drive"
+        assert r2.json()["is_enabled"] is True
+
+        # Verify it appears in enabled folders list again
+        folders_res2 = await async_client.get("/api/v1/folders?only_enabled=true")
+        assert any(f["id"] == f_id for f in folders_res2.json())
+    finally:
+        await async_client.delete(f"/api/v1/folders/{f_id}?permanent=true")
+
+

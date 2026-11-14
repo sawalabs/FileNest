@@ -356,6 +356,8 @@ class PathValidator:
 
             # Check duplicate with existing registered folders
             for existing in existing_folders:
+                if not getattr(existing, "is_enabled", 1):
+                    continue
                 existing_path = Path(existing.root_path).resolve()
                 if path == existing_path:
                     raise ManagedFolderException(f"Drive root is already registered: {path}")
@@ -400,6 +402,8 @@ class PathValidator:
 
         # 5. Check against existing registered folders for duplicates or nesting
         for existing in existing_folders:
+            if not getattr(existing, "is_enabled", 1):
+                continue
             existing_path = Path(existing.root_path).resolve()
             if path == existing_path:
                 raise ManagedFolderException(f"Folder is already registered: {path}")
@@ -513,6 +517,37 @@ class ManagedFolderService:
                 )
                 self.db.delete(child)
 
+        # Re-activate previously disabled/unregistered record if path matches
+        for ef in existing_folders:
+            if Path(ef.root_path).resolve() == canonical_path and not ef.is_enabled:
+                ef.is_enabled = 1
+                ef.name = payload.name.strip() if payload.name else ef.name
+                ef.root_type = root_type
+                if root_type == "drive":
+                    ef.volume_label = vol_label
+                    ef.volume_serial = vol_serial
+                    ef.is_available = 1
+                if payload.monitoring_enabled is not None:
+                    ef.monitoring_enabled = 1 if payload.monitoring_enabled else 0
+                if payload.scan_on_startup is not None:
+                    ef.scan_on_startup = 1 if payload.scan_on_startup else 0
+                if payload.exclude_patterns is not None:
+                    ef.exclude_patterns_json = json.dumps(payload.exclude_patterns)
+                self.db.commit()
+                self.db.refresh(ef)
+
+                caps = payload.capabilities or FolderCapabilities(monitoring=bool(payload.monitoring_enabled))
+                self.update_folder_capabilities(ef.id, caps)
+
+                self.audit_repo.record(
+                    actor_type="user",
+                    action="folder_re_registered",
+                    entity_type="managed_folder",
+                    entity_id=ef.id,
+                    details={"name": ef.name, "root_path": ef.root_path, "root_type": root_type},
+                )
+                logger.info("Re-activated previously unregistered folder '%s' at %s (root_type=%s)", ef.name, ef.root_path, root_type)
+                return ef
 
         folder = ManagedFolder(
             name=payload.name.strip(),
