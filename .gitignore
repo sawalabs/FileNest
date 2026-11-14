@@ -1,0 +1,63 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Production builds
+dist/
+dist-ssr/
+build/
+
+# Tauri build artifacts
+src-tauri/target/
+
+# Packaging outputs
+build_backend/
+dist_backend/
+src-tauri/resources/backend/
+release/
+*.spec
+
+# Python virtual environment & cache
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+.session_token
+*.pem
+*.key
+*.pfx
+*.p12
+*.cer
+credentials.json
+secrets.json
+temp_paddlex_models/
+
+# IDE & OS
+.vscode/
+.idea/
+*.swp
+*.swo
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Local SQLite database
+*.db
+*.db-shm
+*.db-wal
+data/
+
+# Logs
+*.log
+
+# Test sample files
+sample_files/

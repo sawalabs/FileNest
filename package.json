@@ -1,0 +1,51 @@
+{
+  "name": "desktop-storage-manager",
+  "private": true,
+  "version": "0.1.0",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/imanfauzi29/Smart-File-Manager.git"
+  },
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "tauri": "tauri",
+    "desktop": "tauri dev",
+    "desktop:build": "tauri build",
+    "backend:dev": ".venv\\Scripts\\python -m uvicorn backend.app.main:app --reload --host 127.0.0.1 --port 8000",
+    "backend:build:full": ".venv\\Scripts\\python scripts/build_backend.py --mode=full",
+    "backend:build:lite": ".venv\\Scripts\\python scripts/build_backend.py --mode=lite",
+    "build:installer": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-installer.ps1 -Mode lite",
+    "build:installer:lite": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-installer.ps1 -Mode lite",
+    "build:installer:quick": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-installer.ps1 -Mode lite -SkipBackend",
+    "build:installer:full": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-installer.ps1 -Mode full",
+    "backend:test": ".venv\\Scripts\\pytest backend/tests",
+    "test": "pnpm run backend:test"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.2.0",
+    "@tauri-apps/plugin-dialog": "^2.2.0",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "lucide-react": "^0.475.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "recharts": "^3.10.1",
+    "tailwind-merge": "^3.0.1"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.2.7",
+    "@types/node": "^22.13.4",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "@vitejs/plugin-react": "^4.3.4",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.5.2",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.7.3",
+    "vite": "^6.1.0"
+  }
+}
