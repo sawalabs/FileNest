@@ -1,7 +1,10 @@
 from typing import Dict
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from sqlalchemy.orm import Session
 
-from backend.app.api.deps import get_organization_service
+from backend.app.api.deps import get_background_job_service, get_db, get_organization_service
+from backend.app.db.models.managed_folder import ManagedFolder
+from backend.app.schemas.background_job import BackgroundJobResponse, BackgroundJobType
 from backend.app.schemas.organization import (
     OrganizationPlanRequest,
     OrganizationPlanResult,
@@ -11,7 +14,8 @@ from backend.app.schemas.organization import (
     ProtectedSubfolderItem,
     ProtectedSubfolderToggle,
 )
-from backend.app.services.organization import OrganizationService
+from backend.app.services.background_job_service import BackgroundJobService
+from backend.app.services.organization import OrganizationService, run_organization_plan_background
 
 router = APIRouter()
 
@@ -32,6 +36,40 @@ def generate_organization_plan(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to generate organization plan: {str(e)}",
         )
+
+
+@router.post(
+    "/plan-async",
+    response_model=BackgroundJobResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def generate_organization_plan_async(
+    payload: OrganizationPlanRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    job_service: BackgroundJobService = Depends(get_background_job_service),
+) -> BackgroundJobResponse:
+    """Dispatches a non-blocking background organization plan generation job."""
+    folder = db.get(ManagedFolder, payload.managed_folder_id)
+    folder_name = folder.name if folder else payload.managed_folder_id
+
+    job = job_service.create_job(
+        job_type=BackgroundJobType.ORGANIZATION,
+        title=f"Organisasi Folder: {folder_name}",
+        managed_folder_id=payload.managed_folder_id,
+        managed_folder_name=folder_name,
+        current_step="Memulai analisis organisasi folder di latar belakang...",
+        db=db,
+    )
+
+    background_tasks.add_task(
+        run_organization_plan_background,
+        job_id=job.id,
+        payload_data=payload.model_dump(),
+    )
+
+    return BackgroundJobResponse.model_validate(job)
+
 
 
 @router.get(

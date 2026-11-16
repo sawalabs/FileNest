@@ -18,6 +18,7 @@ import {
   X,
 } from "lucide-react";
 import { ApiService } from "@/services/api";
+import { useBackgroundTasks } from "@/contexts/BackgroundTasksContext";
 import { formatDate, cn } from "@/lib/utils";
 import type {
   ManagedFolder,
@@ -42,6 +43,8 @@ interface SmartRenameManagerProps {
 export const SmartRenameManager: React.FC<SmartRenameManagerProps> = ({
   onNavigateToReviewChanges,
 }) => {
+  const { activeJobs, lastCompletedPayload, clearCompletedPayload } = useBackgroundTasks();
+
   const [folders, setFolders] = useState<ManagedFolder[]>([]);
   const [selectedFolderId, setSelectedFolderId] = useState<string>("");
   const [activeTab, setActiveTab] = useState<RenameTab>("create");
@@ -55,6 +58,31 @@ export const SmartRenameManager: React.FC<SmartRenameManagerProps> = ({
   const [isHistoryLoading, setIsHistoryLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+
+  const activeRenameJob = activeJobs.find(
+    (j) =>
+      (j.job_type === "smart_rename_plan" || j.job_type === "batch_ocr") &&
+      (!selectedFolderId ||
+        j.managed_folder_id === selectedFolderId ||
+        !j.managed_folder_id)
+  );
+
+  // Result hydration when job completes in background
+  useEffect(() => {
+    if (
+      lastCompletedPayload &&
+      (lastCompletedPayload.jobType === "smart_rename_plan" ||
+        lastCompletedPayload.jobType === "batch_ocr")
+    ) {
+      if (lastCompletedPayload.resultPayload) {
+        if (lastCompletedPayload.resultPayload.change_plan_id) {
+          setPlanResult(lastCompletedPayload.resultPayload);
+          setSuccessMessage("Rencana penamaan cerdas selesai diproses di latar belakang.");
+        }
+      }
+      clearCompletedPayload();
+    }
+  }, [lastCompletedPayload, clearCompletedPayload]);
 
   const [expandedPlanId, setExpandedPlanId] = useState<string | null>(null);
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
@@ -102,9 +130,8 @@ export const SmartRenameManager: React.FC<SmartRenameManagerProps> = ({
     setErrorMessage(null);
     setSuccessMessage(null);
     try {
-      const res = await ApiService.createSmartRenamePlan(req);
-      setPlanResult(res);
-      setSuccessMessage("Smart Rename plan generated as draft with conflict checks.");
+      await ApiService.generateSmartRenamePlanAsync(req);
+      setSuccessMessage("Analisis penamaan cerdas sedang diproses di latar belakang...");
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Failed to generate rename plan";
       setErrorMessage(msg);
@@ -435,6 +462,29 @@ export const SmartRenameManager: React.FC<SmartRenameManagerProps> = ({
               >
                 <X size={14} />
               </button>
+            </div>
+          </div>
+        )}
+
+        {/* Active Background Job Progress Banner (Decoupled, non-blocking) */}
+        {activeRenameJob && (
+          <div className="p-3.5 rounded-xl border border-blue-500/40 bg-blue-500/5 flex items-center justify-between gap-4 text-xs">
+            <div className="flex items-center gap-3 min-w-0">
+              <RefreshCw size={17} className="animate-spin text-blue-500 shrink-0" />
+              <div className="min-w-0">
+                <p className="font-semibold text-foreground truncate">
+                  {activeRenameJob.title} ({activeRenameJob.progress}%)
+                </p>
+                <p className="text-muted-foreground truncate text-[11px] mt-0.5">
+                  {activeRenameJob.current_step}
+                </p>
+              </div>
+            </div>
+            <div className="w-36 hidden sm:block shrink-0 bg-secondary h-2 rounded-full overflow-hidden">
+              <div
+                className="bg-blue-500 h-full transition-all duration-300"
+                style={{ width: `${Math.max(5, activeRenameJob.progress)}%` }}
+              />
             </div>
           </div>
         )}

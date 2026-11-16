@@ -1080,3 +1080,44 @@ class OrganizationService:
             pass
 
         return active
+
+
+def run_organization_plan_background(
+    job_id: str,
+    payload_data: dict,
+) -> None:
+    """Asynchronous background runner for Organization Plan generation with progress reporting."""
+    from backend.app.db.session import SessionLocal
+    from backend.app.schemas.organization import OrganizationPlanRequest
+    from backend.app.services.background_job_service import get_background_job_service
+
+    job_service = get_background_job_service()
+    db = SessionLocal()
+    try:
+        job_service.start_job(job_id, db=db)
+        service = OrganizationService(db=db)
+        req = OrganizationPlanRequest.model_validate(payload_data)
+
+        job_service.update_progress(
+            job_id,
+            progress=25,
+            current_step="Memeriksa direktori dan mengecualikan subfolder terlindungi...",
+        )
+        if job_service.is_cancelled(job_id):
+            return
+
+        result = service.generate_plan(req)
+
+        job_service.update_progress(
+            job_id,
+            progress=85,
+            current_step="Rencana organisasi selesai dihitung, menyimpan draf...",
+        )
+
+        job_service.complete_job(job_id, result_payload=result.model_dump(), db=db)
+    except Exception as e:
+        logger.error("Background organization plan failed for job %s: %s", job_id, e, exc_info=True)
+        job_service.fail_job(job_id, error_message=str(e), db=db)
+    finally:
+        db.close()
+

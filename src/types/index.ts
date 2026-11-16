@@ -1220,6 +1220,68 @@ export interface ApplyUpdateResponse {
   message: string;
 }
 
+// -----------------------------------------------------------------------------
+// Background Jobs Types (FNE-71 - FNE-83)
+// -----------------------------------------------------------------------------
+
+export type BackgroundJobType =
+  | "storage_analysis"
+  | "smart_rename_plan"
+  | "batch_ocr"
+  | "organization_plan"
+  | "custom_scan";
+
+export type BackgroundJobStatus =
+  | "queued"
+  | "running"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export interface BackgroundJobItem {
+  id: string;
+  job_type: BackgroundJobType;
+  title: string;
+  status: BackgroundJobStatus;
+  progress: number;
+  current_step: string;
+  items_total: number;
+  items_processed: number;
+  managed_folder_id?: string | null;
+  managed_folder_name?: string | null;
+  error_message?: string | null;
+  result_payload?: any | null;
+  cancellation_requested: boolean;
+  started_at?: string | null;
+  finished_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BackgroundJobListResponse {
+  jobs: BackgroundJobItem[];
+  total: number;
+}
+
+export interface BackgroundJobCancelResponse {
+  job_id: string;
+  status: string;
+  message: string;
+}
+
+export interface FloatingTaskNotification {
+  id: string;
+  job_id: string;
+  job_type: BackgroundJobType;
+  title: string;
+  status: "completed" | "failed";
+  summary: string;
+  timestamp: string;
+  result_payload?: any;
+  target_view?: "storage" | "smart_rename" | "organization" | "history";
+}
+
+
 
 
 

@@ -9,6 +9,7 @@ from backend.app.db.models.monitoring import MonitoringConfig, MonitoringEvent
 from backend.app.db.models.organization import OrganizationRule, RuleExecution
 from backend.app.db.models.audit import AuditLog
 from backend.app.db.models.app_setting import AppSetting
+from backend.app.db.models.background_job import BackgroundJob
 
 __all__ = [
     "Base",
@@ -28,4 +29,5 @@ __all__ = [
     "RuleExecution",
     "AuditLog",
     "AppSetting",
+    "BackgroundJob",
 ]

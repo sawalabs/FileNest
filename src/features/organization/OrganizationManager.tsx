@@ -18,6 +18,7 @@ import {
   X,
 } from "lucide-react";
 import { ApiService } from "@/services/api";
+import { useBackgroundTasks } from "@/contexts/BackgroundTasksContext";
 import { formatDate, cn } from "@/lib/utils";
 import type {
   ManagedFolder,
@@ -42,6 +43,8 @@ interface OrganizationManagerProps {
 export const OrganizationManager: React.FC<OrganizationManagerProps> = ({
   onNavigateToReviewChanges,
 }) => {
+  const { activeJobs, lastCompletedPayload, clearCompletedPayload } = useBackgroundTasks();
+
   const [folders, setFolders] = useState<ManagedFolder[]>([]);
   const [selectedFolderId, setSelectedFolderId] = useState<string>("");
   const [activeTab, setActiveTab] = useState<OrgTab>("create");
@@ -55,6 +58,27 @@ export const OrganizationManager: React.FC<OrganizationManagerProps> = ({
   const [isHistoryLoading, setIsHistoryLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+
+  const activeOrgJob = activeJobs.find(
+    (j) =>
+      j.job_type === "organization_plan" &&
+      (!selectedFolderId ||
+        j.managed_folder_id === selectedFolderId ||
+        !j.managed_folder_id)
+  );
+
+  // Result hydration when job completes in background
+  useEffect(() => {
+    if (lastCompletedPayload && lastCompletedPayload.jobType === "organization_plan") {
+      if (lastCompletedPayload.resultPayload) {
+        if (lastCompletedPayload.resultPayload.change_plan_id) {
+          setPlanResult(lastCompletedPayload.resultPayload);
+          setSuccessMessage("Rencana organisasi folder selesai diproses di latar belakang.");
+        }
+      }
+      clearCompletedPayload();
+    }
+  }, [lastCompletedPayload, clearCompletedPayload]);
 
   const [expandedPlanId, setExpandedPlanId] = useState<string | null>(null);
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
@@ -104,9 +128,8 @@ export const OrganizationManager: React.FC<OrganizationManagerProps> = ({
     setErrorMessage(null);
     setSuccessMessage(null);
     try {
-      const res = await ApiService.createOrganizationPlan(req);
-      setPlanResult(res);
-      setSuccessMessage("Organization plan generated successfully as a draft.");
+      await ApiService.generateOrganizationPlanAsync(req);
+      setSuccessMessage("Analisis organisasi folder sedang diproses di latar belakang...");
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Failed to generate organization plan";
       setErrorMessage(msg);
@@ -390,6 +413,29 @@ export const OrganizationManager: React.FC<OrganizationManagerProps> = ({
               >
                 <X size={14} />
               </button>
+            </div>
+          </div>
+        )}
+
+        {/* Active Background Job Progress Banner (Decoupled, non-blocking) */}
+        {activeOrgJob && (
+          <div className="p-3.5 rounded-xl border border-emerald-500/40 bg-emerald-500/5 flex items-center justify-between gap-4 text-xs">
+            <div className="flex items-center gap-3 min-w-0">
+              <RefreshCw size={17} className="animate-spin text-emerald-500 shrink-0" />
+              <div className="min-w-0">
+                <p className="font-semibold text-foreground truncate">
+                  {activeOrgJob.title} ({activeOrgJob.progress}%)
+                </p>
+                <p className="text-muted-foreground truncate text-[11px] mt-0.5">
+                  {activeOrgJob.current_step}
+                </p>
+              </div>
+            </div>
+            <div className="w-36 hidden sm:block shrink-0 bg-secondary h-2 rounded-full overflow-hidden">
+              <div
+                className="bg-emerald-500 h-full transition-all duration-300"
+                style={{ width: `${Math.max(5, activeOrgJob.progress)}%` }}
+              />
             </div>
           </div>
         )}

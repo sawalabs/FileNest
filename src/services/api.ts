@@ -57,6 +57,8 @@ import type {
   GlobalSearchResponse,
   AppUpdateStatusResponse,
   ApplyUpdateResponse,
+  BackgroundJobItem,
+  BackgroundJobCancelResponse,
 } from "@/types";
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "http://127.0.0.1:8000";
@@ -1619,6 +1621,103 @@ export class ApiService {
     if (!response.ok) {
       const err = await response.json().catch(() => ({}));
       throw new Error(err.detail || "Failed to launch installer package");
+    }
+    return response.json();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Background Long-Running Jobs (FNE-71 - FNE-83)
+  // ---------------------------------------------------------------------------
+
+  public static async getActiveJobs(): Promise<BackgroundJobItem[]> {
+    const response = await fetch(`${this.baseUrl}/api/v1/jobs/active`);
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.detail || "Gagal memuat pekerjaan latar belakang aktif");
+    }
+    return response.json();
+  }
+
+  public static async getRecentJobs(limit = 15): Promise<BackgroundJobItem[]> {
+    const response = await fetch(`${this.baseUrl}/api/v1/jobs/recent?limit=${limit}`);
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.detail || "Gagal memuat riwayat pekerjaan");
+    }
+    return response.json();
+  }
+
+  public static async getJob(jobId: string): Promise<BackgroundJobItem> {
+    const response = await fetch(`${this.baseUrl}/api/v1/jobs/${jobId}`);
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.detail || `Gagal mengambil status pekerjaan ${jobId}`);
+    }
+    return response.json();
+  }
+
+  public static async cancelJob(jobId: string): Promise<BackgroundJobCancelResponse> {
+    const response = await fetch(`${this.baseUrl}/api/v1/jobs/${jobId}/cancel`, {
+      method: "POST",
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.detail || `Gagal membatalkan pekerjaan ${jobId}`);
+    }
+    return response.json();
+  }
+
+  public static async dismissJob(jobId: string): Promise<void> {
+    const response = await fetch(`${this.baseUrl}/api/v1/jobs/${jobId}`, {
+      method: "DELETE",
+    });
+    if (!response.ok && response.status !== 204) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.detail || `Gagal menghapus pekerjaan ${jobId}`);
+    }
+  }
+
+  public static async triggerStorageAnalysisAsync(
+    payload: StorageAnalysisRequest
+  ): Promise<BackgroundJobItem> {
+    const response = await fetch(`${this.baseUrl}/api/v1/storage/analyze-async`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.detail || "Gagal memulai analisis penyimpanan latar belakang");
+    }
+    return response.json();
+  }
+
+  public static async generateSmartRenamePlanAsync(
+    payload: SmartRenamePlanRequest
+  ): Promise<BackgroundJobItem> {
+    const response = await fetch(`${this.baseUrl}/api/v1/smart-rename/plan-async`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.detail || "Gagal memulai draf smart rename latar belakang");
+    }
+    return response.json();
+  }
+
+  public static async generateOrganizationPlanAsync(
+    payload: OrganizationPlanRequest
+  ): Promise<BackgroundJobItem> {
+    const response = await fetch(`${this.baseUrl}/api/v1/organization/plan-async`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.detail || "Gagal memulai draf organisasi latar belakang");
     }
     return response.json();
   }

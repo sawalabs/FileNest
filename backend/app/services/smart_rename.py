@@ -720,8 +720,11 @@ class SmartRenameService:
             success=True,
         )
 
-    async def run_batch_ocr_background(self, plan_id: str) -> None:
+    async def run_batch_ocr_background(self, plan_id: str, job_id: Optional[str] = None) -> None:
         """Processes OCR and AI renaming on all eligible items in the plan sequentially in background."""
+        from backend.app.services.background_job_service import get_background_job_service
+        job_service = get_background_job_service()
+
         BATCH_OCR_JOBS[plan_id] = {
             "plan_id": plan_id,
             "is_running": True,
@@ -737,6 +740,8 @@ class SmartRenameService:
             if not plan:
                 BATCH_OCR_JOBS[plan_id]["is_running"] = False
                 BATCH_OCR_JOBS[plan_id]["message"] = "Plan tidak ditemukan"
+                if job_id:
+                    job_service.fail_job(job_id, "Plan tidak ditemukan")
                 return
 
             candidates = [
@@ -746,11 +751,37 @@ class SmartRenameService:
                     ".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tiff", ".pdf"
                 )
             ]
-            BATCH_OCR_JOBS[plan_id]["total_items"] = len(candidates)
+            total_count = len(candidates)
+            BATCH_OCR_JOBS[plan_id]["total_items"] = total_count
 
-            for it in candidates:
+            if job_id:
+                job_service.update_progress(
+                    job_id,
+                    progress=5,
+                    current_step=f"Ditemukan {total_count} file untuk diproses OCR...",
+                    items_total=total_count,
+                    items_processed=0,
+                )
+
+            for idx, it in enumerate(candidates, start=1):
+                if job_id and job_service.is_cancelled(job_id):
+                    BATCH_OCR_JOBS[plan_id]["is_running"] = False
+                    BATCH_OCR_JOBS[plan_id]["message"] = "Analisis OCR dibatalkan."
+                    return
+
                 orig_fn = it.source_relative_path.split("/")[-1]
                 BATCH_OCR_JOBS[plan_id]["current_item_name"] = orig_fn
+
+                if job_id:
+                    pct = int((idx / max(1, total_count)) * 90)
+                    job_service.update_progress(
+                        job_id,
+                        progress=pct,
+                        current_step=f"Analisis OCR: {orig_fn} ({idx}/{total_count})",
+                        items_processed=idx,
+                        items_total=total_count,
+                    )
+
                 try:
                     res = await self.analyze_item_with_ocr(plan_id, it.id)
                     if res.success:
@@ -766,11 +797,25 @@ class SmartRenameService:
             BATCH_OCR_JOBS[plan_id]["is_running"] = False
             BATCH_OCR_JOBS[plan_id]["current_item_name"] = None
             BATCH_OCR_JOBS[plan_id]["message"] = "Analisis OCR latar belakang selesai."
+
+            if job_id:
+                job_service.complete_job(
+                    job_id,
+                    result_payload={
+                        "plan_id": plan_id,
+                        "total_items": total_count,
+                        "processed_items": total_count,
+                        "success_count": BATCH_OCR_JOBS[plan_id]["success_count"],
+                        "error_count": BATCH_OCR_JOBS[plan_id]["error_count"],
+                    },
+                )
         except Exception as e:
             logger.error("Background batch OCR failed for plan %s: %s", plan_id, e)
             if plan_id in BATCH_OCR_JOBS:
                 BATCH_OCR_JOBS[plan_id]["is_running"] = False
                 BATCH_OCR_JOBS[plan_id]["message"] = f"Error: {str(e)}"
+            if job_id:
+                job_service.fail_job(job_id, error_message=str(e))
 
     def get_batch_ocr_status(self, plan_id: str) -> BatchOCRJobStatus:
         info = BATCH_OCR_JOBS.get(plan_id)
@@ -867,4 +912,53 @@ class SmartRenameService:
             category=cat,
             success=True,
         )
+
+
+async def run_smart_rename_plan_background(
+    job_id: str,
+    payload_data: dict,
+) -> None:
+    """Asynchronous background runner for Smart Rename Plan generation with progress reporting."""
+    from backend.app.db.session import SessionLocal
+    from backend.app.schemas.smart_rename import SmartRenamePlanRequest
+    from backend.app.services.background_job_service import get_background_job_service
+
+    job_service = get_background_job_service()
+    db = SessionLocal()
+    try:
+        job_service.start_job(job_id, db=db)
+        service = SmartRenameService(db=db)
+        req = SmartRenamePlanRequest.model_validate(payload_data)
+
+        job_service.update_progress(
+            job_id,
+            progress=20,
+            current_step="Menganalisis file dan menyusun rekomendasi nama...",
+        )
+        if job_service.is_cancelled(job_id):
+            return
+
+        result = await service.generate_plan(req)
+
+        job_service.update_progress(
+            job_id,
+            progress=75,
+            current_step="Rencana penamaan selesai dibuat, menyimpan draf...",
+        )
+
+        if req.run_ocr_background:
+            job_service.update_progress(
+                job_id,
+                progress=80,
+                current_step="Memproses analisis OCR di latar belakang...",
+            )
+            await service.run_batch_ocr_background(result.change_plan_id, job_id=job_id)
+
+        job_service.complete_job(job_id, result_payload=result.model_dump(), db=db)
+    except Exception as e:
+        logger.error("Background smart rename plan failed for job %s: %s", job_id, e, exc_info=True)
+        job_service.fail_job(job_id, error_message=str(e), db=db)
+    finally:
+        db.close()
+
 

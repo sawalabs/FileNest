@@ -81,5 +81,11 @@ def get_ocr_service(db: Session = Depends(get_db)) -> PaddleOCRService:
     return PaddleOCRService(db)
 
 
+def get_background_job_service() -> "BackgroundJobService":
+    from backend.app.services.background_job_service import get_background_job_service as _get_service
+    return _get_service()
+
+
+
 
 
