@@ -44,7 +44,7 @@ interface OrganizationManagerProps {
 export const OrganizationManager: React.FC<OrganizationManagerProps> = ({
   onNavigateToReviewChanges,
 }) => {
-  const { activeJobs, lastCompletedPayload, clearCompletedPayload } = useBackgroundTasks();
+  const { activeJobs, lastCompletedPayload, clearCompletedPayload, trackJob } = useBackgroundTasks();
 
   const [folders, setFolders] = useState<ManagedFolder[]>([]);
   const [selectedFolderId, setSelectedFolderId] = useState<string>("");
@@ -138,7 +138,10 @@ export const OrganizationManager: React.FC<OrganizationManagerProps> = ({
     setErrorMessage(null);
     setSuccessMessage(null);
     try {
-      await ApiService.generateOrganizationPlanAsync(req);
+      const job = await ApiService.generateOrganizationPlanAsync(req);
+      if (job) {
+        trackJob(job);
+      }
       setSuccessMessage("Analisis organisasi folder sedang diproses di latar belakang...");
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Failed to generate organization plan";

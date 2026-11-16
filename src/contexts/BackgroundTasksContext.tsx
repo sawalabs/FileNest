@@ -34,6 +34,7 @@ interface BackgroundTasksContextType {
   dismissNotification: (id: string) => void;
   clearAllNotifications: () => void;
   refreshJobs: () => Promise<void>;
+  trackJob: (job: BackgroundJobItem) => void;
   lastCompletedPayload: CompletedJobPayload | null;
   clearCompletedPayload: () => void;
   navigateToJobResult: (jobId: string, onNavigate?: (item: NavItem) => void) => void;
@@ -78,6 +79,9 @@ export const BackgroundTasksProvider: React.FC<{
 
   // Keep track of previously known active job statuses to detect transitions
   const previousStatusMap = useRef<Map<string, string>>(new Map());
+  const initialJobIdsRef = useRef<Set<string>>(new Set());
+  const hasInitializedRef = useRef<boolean>(false);
+  const notifiedJobIdsRef = useRef<Set<string>>(new Set());
 
   // Save notifications to localStorage
   useEffect(() => {
@@ -128,13 +132,22 @@ export const BackgroundTasksProvider: React.FC<{
         previousStatusMap.current.set(job.id, job.status);
       });
 
+      // On first load, record existing completed jobs so we don't alert for past sessions
+      if (!hasInitializedRef.current) {
+        recents.forEach((job) => initialJobIdsRef.current.add(job.id));
+        hasInitializedRef.current = true;
+      }
+
       recents.forEach((job) => {
         const prevStatus = previousStatusMap.current.get(job.id);
-        if (
-          prevStatus &&
-          (prevStatus === "running" || prevStatus === "queued") &&
-          (job.status === "completed" || job.status === "failed")
-        ) {
+        const isCompletedOrFailed = job.status === "completed" || job.status === "failed";
+        const hasBeenNotified = notifiedJobIdsRef.current.has(job.id);
+
+        const wasRunning = prevStatus === "running" || prevStatus === "queued";
+        const isNewInSession = !initialJobIdsRef.current.has(job.id);
+
+        if (isCompletedOrFailed && !hasBeenNotified && (wasRunning || isNewInSession)) {
+          notifiedJobIdsRef.current.add(job.id);
           // Transition detected! Create a floating toast notification
           const notifId = `notif_${job.id}_${Date.now()}`;
           let targetView: "storage" | "smart_rename" | "organization" | "history" = "history";
@@ -191,10 +204,24 @@ export const BackgroundTasksProvider: React.FC<{
     }
   }, []);
 
-  // Polling loop: 1.5s when active jobs exist, 5s when idle
+  // Immediate registration of newly initiated background job
+  const trackJob = useCallback((job: BackgroundJobItem) => {
+    if (!job || !job.id) return;
+    previousStatusMap.current.set(job.id, job.status || "running");
+    setActiveJobs((prev) => {
+      if (prev.some((j) => j.id === job.id)) return prev;
+      return [job, ...prev];
+    });
+    // Immediately check status
+    setTimeout(() => {
+      refreshJobs();
+    }, 150);
+  }, [refreshJobs]);
+
+  // Polling loop: 1.0s when active jobs exist, 2.5s when idle
   useEffect(() => {
     refreshJobs();
-    const intervalTime = activeJobs.length > 0 ? 1500 : 5000;
+    const intervalTime = activeJobs.length > 0 ? 1000 : 2500;
     const interval = setInterval(refreshJobs, intervalTime);
     return () => clearInterval(interval);
   }, [activeJobs.length, refreshJobs]);
@@ -317,6 +344,7 @@ export const BackgroundTasksProvider: React.FC<{
         dismissNotification,
         clearAllNotifications,
         refreshJobs,
+        trackJob,
         lastCompletedPayload,
         clearCompletedPayload,
         navigateToJobResult,

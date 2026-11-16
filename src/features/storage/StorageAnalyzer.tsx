@@ -33,7 +33,7 @@ export const StorageAnalyzer: React.FC<StorageAnalyzerProps> = ({
   onNavigateToFiles,
   onNavigateToReviewChanges,
 }) => {
-  const { activeJobs, lastCompletedPayload, clearCompletedPayload } = useBackgroundTasks();
+  const { activeJobs, lastCompletedPayload, clearCompletedPayload, trackJob } = useBackgroundTasks();
 
   const [folders, setFolders] = useState<ManagedFolder[]>([]);
   const [selectedFolderId, setSelectedFolderId] = useState<string>("all");
@@ -121,11 +121,14 @@ export const StorageAnalyzer: React.FC<StorageAnalyzerProps> = ({
     setErrorMessage(null);
     try {
       const folderIdParam = targetFolderId === "all" ? undefined : targetFolderId;
-      await ApiService.triggerStorageAnalysisAsync({
+      const job = await ApiService.triggerStorageAnalysisAsync({
         managed_folder_id: folderIdParam,
         large_file_threshold_bytes: 100 * 1024 * 1024, // 100 MB
         calculate_hashes: true,
       });
+      if (job) {
+        trackJob(job);
+      }
       if (targetFolderId !== undefined) {
         setSelectedFolderId(targetFolderId);
       }

@@ -44,7 +44,7 @@ interface SmartRenameManagerProps {
 export const SmartRenameManager: React.FC<SmartRenameManagerProps> = ({
   onNavigateToReviewChanges,
 }) => {
-  const { activeJobs, lastCompletedPayload, clearCompletedPayload } = useBackgroundTasks();
+  const { activeJobs, lastCompletedPayload, clearCompletedPayload, trackJob } = useBackgroundTasks();
 
   const [folders, setFolders] = useState<ManagedFolder[]>([]);
   const [selectedFolderId, setSelectedFolderId] = useState<string>("");
@@ -140,7 +140,10 @@ export const SmartRenameManager: React.FC<SmartRenameManagerProps> = ({
     setErrorMessage(null);
     setSuccessMessage(null);
     try {
-      await ApiService.generateSmartRenamePlanAsync(req);
+      const job = await ApiService.generateSmartRenamePlanAsync(req);
+      if (job) {
+        trackJob(job);
+      }
       setSuccessMessage("Analisis penamaan cerdas sedang diproses di latar belakang...");
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Failed to generate rename plan";
