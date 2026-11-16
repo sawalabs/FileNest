@@ -1,6 +1,7 @@
 import React from "react";
 import {
   Folder,
+  Shield,
   FileText,
   FileCode,
   FileImage,
@@ -17,6 +18,7 @@ interface FileIconProps {
   extension?: string | null;
   size?: number;
   className?: string;
+  isExcluded?: boolean;
 }
 
 export const FileIcon: React.FC<FileIconProps> = ({
@@ -25,8 +27,20 @@ export const FileIcon: React.FC<FileIconProps> = ({
   extension,
   size = 20,
   className = "",
+  isExcluded = false,
 }) => {
   if (itemType === "directory") {
+    if (isExcluded) {
+      return (
+        <div className="relative inline-flex items-center justify-center shrink-0">
+          <Folder size={size} className={`text-amber-600/80 fill-amber-600/15 shrink-0 ${className}`} />
+          <Shield
+            size={Math.max(10, Math.floor(size * 0.55))}
+            className="absolute -bottom-0.5 -right-0.5 text-amber-500 fill-amber-500/30 bg-background rounded-full"
+          />
+        </div>
+      );
+    }
     return <Folder size={size} className={`text-amber-500 fill-amber-500/20 shrink-0 ${className}`} />;
   }
 

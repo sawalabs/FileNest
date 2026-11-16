@@ -26,6 +26,7 @@ import {
   ZoomIn,
   ZoomOut,
   Sparkles,
+  Shield,
 } from "lucide-react";
 import { FileIcon } from "./FileIcon";
 import { FileContextMenu } from "./FileContextMenu";
@@ -42,6 +43,7 @@ import type {
   DirectoryListingResponse,
   FileItemMetadata,
   ManagedFolder,
+  FolderExclusionItem,
 } from "@/types";
 
 interface SubfolderNode {
@@ -144,6 +146,71 @@ export const FilesManager: React.FC<FilesManagerProps> = ({
     y: number;
     item: FileItemMetadata;
   } | null>(null);
+
+  // Folder Exclusions state (FNE-84, FNE-85, FNE-86)
+  const [exclusions, setExclusions] = useState<FolderExclusionItem[]>([]);
+
+  const fetchExclusions = useCallback(async (folderId: string) => {
+    if (!folderId) {
+      setExclusions([]);
+      return;
+    }
+    try {
+      const list = await ApiService.getFolderExclusions(folderId);
+      setExclusions(list || []);
+    } catch {
+      setExclusions([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (selectedFolderId) {
+      fetchExclusions(selectedFolderId);
+    } else {
+      setExclusions([]);
+    }
+  }, [selectedFolderId, fetchExclusions]);
+
+  const isPathExcluded = useCallback(
+    (relPath: string): boolean => {
+      if (!relPath || exclusions.length === 0) return false;
+      const norm = relPath.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "").toLowerCase();
+      return exclusions.some((ex) => {
+        if (!ex.is_enabled) return false;
+        const exNorm = ex.value.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "").toLowerCase();
+        if (ex.exclusion_type === "directory") {
+          return norm === exNorm || norm.startsWith(`${exNorm}/`);
+        } else if (ex.exclusion_type === "file") {
+          return norm === exNorm;
+        } else if (ex.exclusion_type === "extension") {
+          const ext = norm.split(".").pop() || "";
+          return ext === ex.value.toLowerCase().replace(/^\./, "");
+        }
+        return false;
+      });
+    },
+    [exclusions]
+  );
+
+  const handleToggleExcludeFolder = async (item: FileItemMetadata) => {
+    if (!selectedFolderId) return;
+    try {
+      const res = await ApiService.toggleFolderExclusion(
+        selectedFolderId,
+        item.relative_path,
+        item.item_type === "directory" ? "directory" : "file",
+        `Dikecualikan dari Files Manager`
+      );
+      await fetchExclusions(selectedFolderId);
+      setSuccessToast(
+        res.action === "added"
+          ? `Folder '${item.name}' berhasil dikecualikan dari scanning.`
+          : `Pengecualian untuk '${item.name}' dicabut (folder diikutsertakan dalam scan).`
+      );
+    } catch (err: any) {
+      setError(err?.message || "Gagal memperbarui status pengecualian folder.");
+    }
+  };
 
   const handleItemContextMenu = (item: FileItemMetadata, e: React.MouseEvent) => {
     e.preventDefault();
@@ -846,6 +913,11 @@ export const FilesManager: React.FC<FilesManagerProps> = ({
                                 </button>
                                 <Folder size={13} className="text-amber-500/80 shrink-0" />
                                 <span className="truncate flex-1 text-left">{sub.name}</span>
+                                {isFolderSelected && isPathExcluded(sub.relative_path) && (
+                                  <span title="Dikecualikan dari scanning" className="inline-flex shrink-0">
+                                    <Shield size={11} className="text-amber-500 shrink-0" />
+                                  </span>
+                                )}
 
                                 <button
                                   type="button"
@@ -894,6 +966,11 @@ export const FilesManager: React.FC<FilesManagerProps> = ({
                                       >
                                         <Folder size={12} className="text-amber-500/70 shrink-0" />
                                         <span className="truncate flex-1 text-left">{nested.name}</span>
+                                        {isFolderSelected && isPathExcluded(nested.relative_path) && (
+                                          <span title="Dikecualikan dari scanning" className="inline-flex shrink-0">
+                                            <Shield size={10} className="text-amber-500 shrink-0" />
+                                          </span>
+                                        )}
 
                                         <button
                                           type="button"
@@ -1428,11 +1505,18 @@ export const FilesManager: React.FC<FilesManagerProps> = ({
                               itemType={item.item_type}
                               category={item.category}
                               extension={item.extension}
+                              isExcluded={item.item_type === "directory" && isPathExcluded(item.relative_path)}
                               size={16}
                             />
                             <span className="truncate" title={item.name}>
                               {itemDisplayName}
                             </span>
+                            {item.item_type === "directory" && isPathExcluded(item.relative_path) && (
+                              <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-medium bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 shrink-0">
+                                <Shield size={10} />
+                                <span>Dikecualikan</span>
+                              </span>
+                            )}
                           </div>
                         </td>
                         <td className={`${cellPad} text-right text-muted-foreground font-mono text-[11px]`}>
@@ -1531,6 +1615,7 @@ export const FilesManager: React.FC<FilesManagerProps> = ({
                         itemType={item.item_type}
                         category={item.category}
                         extension={item.extension}
+                        isExcluded={item.item_type === "directory" && isPathExcluded(item.relative_path)}
                         size={gridZoom > 140 ? 44 : 34}
                       />
                     </div>
@@ -1549,6 +1634,13 @@ export const FilesManager: React.FC<FilesManagerProps> = ({
                     <p className="text-[10px] text-muted-foreground mt-0.5">
                       {item.item_type === "directory" ? "Folder" : formatSize(item.size_bytes)}
                     </p>
+
+                    {item.item_type === "directory" && isPathExcluded(item.relative_path) && (
+                      <span className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded font-medium bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 mt-1">
+                        <Shield size={9} />
+                        <span>Dikecualikan</span>
+                      </span>
+                    )}
                   </div>
                 );
               })}
@@ -1649,6 +1741,8 @@ export const FilesManager: React.FC<FilesManagerProps> = ({
               autoPrompt: `Jelaskan ${item.item_type === "directory" ? "subfolder" : "berkas"} '${item.name}' dan rekomendasikan penataan yang aman.`,
             })
           }
+          isExcluded={activeItem ? isPathExcluded(activeItem.relative_path) : false}
+          onToggleExcludeFolder={handleToggleExcludeFolder}
         />
       )}
 
@@ -1721,6 +1815,8 @@ export const FilesManager: React.FC<FilesManagerProps> = ({
           onCopyPath={handleCopyPath}
           onAskAI={onOpenAssistant ? handleAskAI : undefined}
           onShowDetails={handleShowDetails}
+          isExcluded={isPathExcluded(contextMenu.item.relative_path)}
+          onToggleExcludeFolder={handleToggleExcludeFolder}
         />
       )}
     </div>

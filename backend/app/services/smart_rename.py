@@ -60,9 +60,14 @@ class SmartRenameService:
         skipped_protected_folders: set = set()
 
         from backend.app.services.organization import OrganizationService
+        from backend.app.services.managed_folder import ManagedFolderService
         protected_paths = OrganizationService(self.db).get_active_protected_rel_paths(
-            folder.id, auto_detect_new=False
+            folder.id, auto_detect_new=True
         )
+        mf_service = ManagedFolderService(self.db)
+        for excl in mf_service.get_folder_exclusions(folder.id):
+            if excl.is_enabled and excl.exclusion_type == "directory" and excl.value.strip():
+                protected_paths.add(excl.value.replace("\\", "/").strip("/"))
         protected_lower = {p.lower(): p for p in protected_paths}
 
         if request.target_relative_paths:

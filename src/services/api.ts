@@ -1177,6 +1177,28 @@ export class ApiService {
     }
   }
 
+  public static async toggleFolderExclusion(
+    folderId: string,
+    relativePath: string,
+    exclusionType = "directory",
+    reason?: string
+  ): Promise<{ action: "added" | "removed"; item?: FolderExclusionItem; exclusion_id?: string }> {
+    const response = await fetch(`${this.baseUrl}/api/v1/folders/${folderId}/exclusions/toggle`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        relative_path: relativePath,
+        exclusion_type: exclusionType,
+        reason,
+      }),
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({ detail: "Failed to toggle exclusion" }));
+      throw new Error(err.detail || "Failed to toggle exclusion");
+    }
+    return response.json();
+  }
+
   public static async getFolderHealth(folderId: string): Promise<FolderHealthCheck> {
     const response = await fetch(`${this.baseUrl}/api/v1/folders/${folderId}/health`);
     if (!response.ok) {

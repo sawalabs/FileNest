@@ -263,6 +263,10 @@ export interface StorageAnalysisResult {
   total_storage_bytes: number;
   total_files_count: number;
   total_folders_count: number;
+  skipped_protected_count?: number;
+  skipped_inaccessible_count?: number;
+  skipped_excluded_count?: number;
+  skipped_excluded_paths?: string[];
   large_files_count: number;
   large_files_bytes: number;
   large_files_percentage: number;

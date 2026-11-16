@@ -5,6 +5,7 @@ import {
   FileText,
   History,
   ShieldCheck,
+  Shield,
   CheckCircle2,
   AlertCircle,
   ArrowRight,
@@ -520,14 +521,33 @@ export const SmartRenameManager: React.FC<SmartRenameManagerProps> = ({
               </div>
             ) : (
               <>
-                {planResult.protected_folders_skipped && planResult.protected_folders_skipped.length > 0 && (
-                  <div className="p-3 rounded-xl bg-primary/5 border border-primary/20 text-xs text-foreground flex items-center justify-between gap-2">
-                    <span>
-                      <strong>{planResult.protected_folders_skipped.length} protected folder</strong> dilewati agar isinya tetap utuh:{" "}
-                      <span className="font-mono text-primary">
-                        {planResult.protected_folders_skipped.join(", ")}
+                {((planResult.protected_folders_skipped_count || 0) > 0 ||
+                  (planResult.protected_folders_skipped && planResult.protected_folders_skipped.length > 0)) && (
+                  <div className="p-3.5 rounded-xl bg-amber-500/5 border border-amber-500/20 text-xs text-foreground flex flex-col gap-2 shadow-2xs">
+                    <div className="flex items-center gap-2">
+                      <div className="p-1 rounded-md bg-amber-500/10 text-amber-600 dark:text-amber-400 shrink-0">
+                        <Shield size={14} />
+                      </div>
+                      <span className="font-semibold text-foreground">
+                        {planResult.protected_folders_skipped_count || planResult.protected_folders_skipped?.length || 0} Folder Dikecualikan & Dilindungi
                       </span>
-                    </span>
+                      <span className="text-muted-foreground">
+                        (dilewati otomatis dari rencana penggantian nama agar struktur aman)
+                      </span>
+                    </div>
+                    {planResult.protected_folders_skipped && planResult.protected_folders_skipped.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5 pl-6 max-h-24 overflow-y-auto">
+                        {planResult.protected_folders_skipped.map((p) => (
+                          <span
+                            key={p}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded font-mono text-[11px] bg-background/80 border border-border/60 text-muted-foreground"
+                          >
+                            <Shield size={10} className="text-amber-500 shrink-0" />
+                            <span>{p}</span>
+                          </span>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
                 <SmartRenameSummaryCards data={planResult} />

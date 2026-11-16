@@ -1,5 +1,6 @@
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel, Field
 
 from backend.app.api.deps import get_managed_folder_service
 from backend.app.schemas.managed_folder import (
@@ -277,6 +278,33 @@ def delete_folder_exclusion(
     removed = service.delete_folder_exclusion(folder_id, exclusion_id)
     if not removed:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exclusion not found")
+
+
+class FolderExclusionToggleRequest(BaseModel):
+    relative_path: str = Field(..., min_length=1)
+    exclusion_type: str = "directory"
+    reason: Optional[str] = None
+
+
+@router.post(
+    "/{folder_id}/exclusions/toggle",
+    summary="Toggle exclusion for a folder or file path",
+)
+def toggle_folder_exclusion(
+    folder_id: str,
+    payload: FolderExclusionToggleRequest,
+    service: ManagedFolderService = Depends(get_managed_folder_service),
+) -> Dict[str, Any]:
+    try:
+        return service.toggle_folder_exclusion(
+            folder_id,
+            payload.relative_path,
+            payload.exclusion_type,
+            payload.reason,
+        )
+    except ManagedFolderException as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
 
 
 # ==========================================

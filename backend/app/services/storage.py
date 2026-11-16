@@ -244,6 +244,28 @@ class StorageAnalyzerService:
         total_folders = 0
         skipped_protected_count = 0
         skipped_inaccessible_count = 0
+        skipped_excluded_count = 0
+        skipped_excluded_paths: Set[str] = set()
+
+        # Load user-configured folder & file exclusions (FNE-87, FNE-89)
+        from backend.app.services.managed_folder import ManagedFolderService
+        mf_service = ManagedFolderService(self.db)
+        folder_exclusions = mf_service.get_folder_exclusions(folder.id)
+        excluded_dirs: Set[str] = {
+            ex.value.replace("\\", "/").strip("/").lower()
+            for ex in folder_exclusions
+            if ex.is_enabled and ex.exclusion_type == "directory" and ex.value.strip()
+        }
+        excluded_files: Set[str] = {
+            ex.value.replace("\\", "/").strip("/").lower()
+            for ex in folder_exclusions
+            if ex.is_enabled and ex.exclusion_type == "file" and ex.value.strip()
+        }
+        excluded_exts: Set[str] = {
+            ex.value.lower().lstrip(".")
+            for ex in folder_exclusions
+            if ex.is_enabled and ex.exclusion_type == "extension" and ex.value.strip()
+        }
 
         # Overlap detection (FNE-11): find registered nested folder roots
         nested_roots: Set[Path] = set()
@@ -297,8 +319,19 @@ class StorageAnalyzerService:
 
                         sub_items_count += 1
                         entry_rel = entry_path.relative_to(root_path).as_posix()
+                        entry_rel_lower = entry_rel.lower()
 
                         if entry.is_dir(follow_symlinks=False):
+                            # Check if directory or any parent is excluded (FNE-87, FNE-89)
+                            is_excluded = any(
+                                entry_rel_lower == ex_d or entry_rel_lower.startswith(f"{ex_d}/")
+                                for ex_d in excluded_dirs
+                            )
+                            if is_excluded:
+                                skipped_excluded_count += 1
+                                skipped_excluded_paths.add(entry_rel)
+                                continue
+
                             total_folders += 1
                             stack.append(entry_path)
                             try:
@@ -312,6 +345,19 @@ class StorageAnalyzerService:
                                 "modified_at": mtime,
                             })
                         elif entry.is_file(follow_symlinks=False):
+                            ext = entry_path.suffix.lower().lstrip(".") if entry_path.suffix else None
+
+                            # Check if file, extension, or parent directory is excluded (FNE-87, FNE-89)
+                            is_excluded = (
+                                entry_rel_lower in excluded_files
+                                or any(entry_rel_lower.startswith(f"{ex_d}/") for ex_d in excluded_dirs)
+                                or (bool(ext) and ext in excluded_exts)
+                            )
+                            if is_excluded:
+                                skipped_excluded_count += 1
+                                skipped_excluded_paths.add(entry_rel)
+                                continue
+
                             try:
                                 st = entry_path.stat(follow_symlinks=False)
                                 size = st.st_size
@@ -651,6 +697,8 @@ class StorageAnalyzerService:
             volume_free_bytes=vol_free,
             skipped_protected_count=skipped_protected_count,
             skipped_inaccessible_count=skipped_inaccessible_count,
+            skipped_excluded_count=skipped_excluded_count,
+            skipped_excluded_paths=sorted(list(skipped_excluded_paths)),
             large_files_count=len(large_files),
             large_files_bytes=large_files_bytes,
             large_files_percentage=large_files_pct,
@@ -797,6 +845,11 @@ class StorageAnalyzerService:
             StorageUsageTrendPoint(date=now_date, total_size_bytes=total_storage)
         ]
 
+        total_skipped_excluded = sum(getattr(r, "skipped_excluded_count", 0) or 0 for r in results)
+        all_skipped_excluded_paths = sorted(
+            list(set(p for r in results for p in (getattr(r, "skipped_excluded_paths", []) or [])))
+        )
+
         return StorageAnalysisResult(
             managed_folder_id=None,
             managed_folder_name="All Managed Folders",
@@ -804,6 +857,8 @@ class StorageAnalyzerService:
             total_storage_bytes=total_storage,
             total_files_count=total_files,
             total_folders_count=total_folders,
+            skipped_excluded_count=total_skipped_excluded,
+            skipped_excluded_paths=all_skipped_excluded_paths,
             large_files_count=large_files_count,
             large_files_bytes=large_files_bytes,
             large_files_percentage=large_files_pct,

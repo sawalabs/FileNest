@@ -7,6 +7,8 @@ import {
   Eye,
   Check,
   ShieldCheck,
+  Shield,
+  ShieldOff,
   RefreshCw,
   X,
   Sparkles,
@@ -26,6 +28,8 @@ interface FileDetailsPanelProps {
   managedFolder?: ManagedFolder | null;
   onUnregisterFolder?: () => void;
   onAskAI?: (item: FileItemMetadata) => void;
+  isExcluded?: boolean;
+  onToggleExcludeFolder?: (item: FileItemMetadata) => void;
 }
 
 export const FileDetailsPanel: React.FC<FileDetailsPanelProps> = ({
@@ -39,6 +43,8 @@ export const FileDetailsPanel: React.FC<FileDetailsPanelProps> = ({
   managedFolder,
   onUnregisterFolder,
   onAskAI,
+  isExcluded = false,
+  onToggleExcludeFolder,
 }) => {
   const [copied, setCopied] = useState(false);
   const [folderSummary, setFolderSummary] = useState<FolderSummaryResponse | null>(null);
@@ -177,6 +183,7 @@ export const FileDetailsPanel: React.FC<FileDetailsPanelProps> = ({
               itemType={item.item_type}
               category={item.category}
               extension={item.extension}
+              isExcluded={isDir && isExcluded}
               size={32}
             />
           </div>
@@ -191,6 +198,12 @@ export const FileDetailsPanel: React.FC<FileDetailsPanelProps> = ({
                 ? `${item.extension.toUpperCase()} File`
                 : `${item.category} File`}
             </p>
+            {isDir && isExcluded && (
+              <span className="inline-flex items-center gap-1 mt-1.5 text-[10px] px-1.5 py-0.5 rounded font-medium bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
+                <Shield size={10} />
+                <span>Dikecualikan dari Scan</span>
+              </span>
+            )}
           </div>
         </div>
 
@@ -242,10 +255,17 @@ export const FileDetailsPanel: React.FC<FileDetailsPanelProps> = ({
 
             <div>
               <span className="text-muted-foreground block text-[11px]">Scope Status</span>
-              <span className="inline-flex items-center gap-1 font-medium text-emerald-600 text-xs">
-                <ShieldCheck size={13} />
-                <span>Protected & Verified</span>
-              </span>
+              {isDir && isExcluded ? (
+                <span className="inline-flex items-center gap-1 font-medium text-amber-600 dark:text-amber-400 text-xs">
+                  <Shield size={13} />
+                  <span>Dikecualikan (Aman & Dilindungi)</span>
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 font-medium text-emerald-600 text-xs">
+                  <ShieldCheck size={13} />
+                  <span>Protected & Verified</span>
+                </span>
+              )}
             </div>
           </div>
         </div>
@@ -259,15 +279,39 @@ export const FileDetailsPanel: React.FC<FileDetailsPanelProps> = ({
             <div className="space-y-1.5 text-xs">
               <div className="flex justify-between items-center py-1">
                 <span className="text-muted-foreground">Organization</span>
-                <span className="px-1.5 py-0.5 text-[10px] rounded font-semibold bg-emerald-500/10 text-emerald-600">
-                  Enabled
-                </span>
+                {isExcluded ? (
+                  <span className="px-1.5 py-0.5 text-[10px] rounded font-semibold bg-amber-500/10 text-amber-600 dark:text-amber-400">
+                    Dikecualikan
+                  </span>
+                ) : (
+                  <span className="px-1.5 py-0.5 text-[10px] rounded font-semibold bg-emerald-500/10 text-emerald-600">
+                    Enabled
+                  </span>
+                )}
               </div>
               <div className="flex justify-between items-center py-1">
                 <span className="text-muted-foreground">Smart Rename</span>
-                <span className="px-1.5 py-0.5 text-[10px] rounded font-semibold bg-emerald-500/10 text-emerald-600">
-                  Enabled
-                </span>
+                {isExcluded ? (
+                  <span className="px-1.5 py-0.5 text-[10px] rounded font-semibold bg-amber-500/10 text-amber-600 dark:text-amber-400">
+                    Dikecualikan
+                  </span>
+                ) : (
+                  <span className="px-1.5 py-0.5 text-[10px] rounded font-semibold bg-emerald-500/10 text-emerald-600">
+                    Enabled
+                  </span>
+                )}
+              </div>
+              <div className="flex justify-between items-center py-1">
+                <span className="text-muted-foreground">Storage Analyzer</span>
+                {isExcluded ? (
+                  <span className="px-1.5 py-0.5 text-[10px] rounded font-semibold bg-amber-500/10 text-amber-600 dark:text-amber-400">
+                    Dikecualikan
+                  </span>
+                ) : (
+                  <span className="px-1.5 py-0.5 text-[10px] rounded font-semibold bg-emerald-500/10 text-emerald-600">
+                    Enabled
+                  </span>
+                )}
               </div>
               <div className="flex justify-between items-center py-1">
                 <span className="text-muted-foreground">Monitoring</span>
@@ -326,6 +370,30 @@ export const FileDetailsPanel: React.FC<FileDetailsPanelProps> = ({
               <Pencil size={15} className="text-muted-foreground" />
               <span>Rename</span>
             </button>
+
+            {isDir && onToggleExcludeFolder && (
+              <button
+                type="button"
+                onClick={() => onToggleExcludeFolder(item)}
+                className={`w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium rounded-md transition-colors ${
+                  isExcluded
+                    ? "bg-amber-500/10 hover:bg-amber-500/20 text-amber-700 dark:text-amber-400 border border-amber-500/20"
+                    : "hover:bg-muted text-foreground"
+                }`}
+              >
+                {isExcluded ? (
+                  <>
+                    <ShieldOff size={15} className="text-amber-600 dark:text-amber-400" />
+                    <span>Batal Kecualikan Folder (Izinkan Scan)</span>
+                  </>
+                ) : (
+                  <>
+                    <Shield size={15} className="text-muted-foreground" />
+                    <span>Kecualikan Folder (Lindungi dari Scan)</span>
+                  </>
+                )}
+              </button>
+            )}
 
             {isDir && (
               <button
