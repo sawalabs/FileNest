@@ -57,10 +57,30 @@ class SmartRenameService:
 
         # 1. Collect target files
         candidate_files: List[Dict[str, Any]] = []
+        skipped_protected_folders: set = set()
+
+        from backend.app.services.organization import OrganizationService
+        protected_paths = OrganizationService(self.db).get_active_protected_rel_paths(
+            folder.id, auto_detect_new=False
+        )
+        protected_lower = {p.lower(): p for p in protected_paths}
 
         if request.target_relative_paths:
             # Specific files selected
             for rel in request.target_relative_paths:
+                rel_norm = rel.replace("\\", "/").strip("/")
+                rel_lower = rel_norm.lower()
+
+                # Check if file falls under a protected folder
+                is_prot = False
+                for p_low, orig_p in protected_lower.items():
+                    if rel_lower == p_low or rel_lower.startswith(f"{p_low}/"):
+                        skipped_protected_folders.add(orig_p)
+                        is_prot = True
+                        break
+                if is_prot:
+                    continue
+
                 fpath = PathValidator.resolve_and_verify_scope(folder, rel)
                 if not fpath.exists() or not fpath.is_file():
                     continue
@@ -92,13 +112,6 @@ class SmartRenameService:
                 if not target_dir.exists() or not target_dir.is_dir():
                     raise ValueError(f"Target subfolder '{request.target_subfolder}' does not exist")
 
-            from backend.app.services.organization import OrganizationService
-
-            protected_paths = OrganizationService(self.db).get_active_protected_rel_paths(
-                folder.id, auto_detect_new=False
-            )
-            protected_lower = {p.lower() for p in protected_paths}
-
             for dirpath, dirnames, filenames in os.walk(target_dir):
                 dpath = Path(dirpath)
                 if is_reparse_point_or_symlink(dpath) or PathValidator.is_protected_path(dpath):
@@ -106,10 +119,13 @@ class SmartRenameService:
                     continue
 
                 dir_rel = dpath.relative_to(root_path).as_posix() if dpath != root_path else ""
-                if dir_rel and any(
-                    dir_rel.lower() == p or dir_rel.lower().startswith(f"{p}/")
-                    for p in protected_lower
-                ):
+                dir_matched_prot = False
+                if dir_rel:
+                    for p_low, orig_p in protected_lower.items():
+                        if dir_rel.lower() == p_low or dir_rel.lower().startswith(f"{p_low}/"):
+                            skipped_protected_folders.add(orig_p)
+                            dir_matched_prot = True
+                if dir_matched_prot:
                     dirnames.clear()
                     continue
 
@@ -118,10 +134,13 @@ class SmartRenameService:
                     if d.startswith("."):
                         continue
                     child_rel = f"{dir_rel}/{d}" if dir_rel else d
-                    if any(
-                        child_rel.lower() == p or child_rel.lower().startswith(f"{p}/")
-                        for p in protected_lower
-                    ):
+                    child_matched_prot = False
+                    for p_low, orig_p in protected_lower.items():
+                        if child_rel.lower() == p_low or child_rel.lower().startswith(f"{p_low}/"):
+                            skipped_protected_folders.add(orig_p)
+                            child_matched_prot = True
+                            break
+                    if child_matched_prot:
                         continue
                     kept_dirs.append(d)
                 dirnames[:] = kept_dirs
@@ -353,6 +372,8 @@ class SmartRenameService:
             files_unchanged_count=unchanged_count,
             conflicts_count=conflicts_count,
             total_size_bytes=total_size,
+            protected_folders_skipped_count=len(skipped_protected_folders),
+            protected_folders_skipped=sorted(skipped_protected_folders),
             items=preview_items,
         )
 

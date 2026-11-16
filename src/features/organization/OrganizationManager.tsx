@@ -9,6 +9,12 @@ import {
   FileText,
   RefreshCw,
   ArrowRight,
+  ChevronDown,
+  ChevronRight,
+  Pencil,
+  Trash2,
+  Check,
+  Send,
   X,
 } from "lucide-react";
 import { ApiService } from "@/services/api";
@@ -49,6 +55,12 @@ export const OrganizationManager: React.FC<OrganizationManagerProps> = ({
   const [isHistoryLoading, setIsHistoryLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+
+  const [expandedPlanId, setExpandedPlanId] = useState<string | null>(null);
+  const [editingItemId, setEditingItemId] = useState<string | null>(null);
+  const [editDestPath, setEditDestPath] = useState<string>("");
+  const [isUpdatingSavedItem, setIsUpdatingSavedItem] = useState(false);
+  const [isSubmittingSavedPlan, setIsSubmittingSavedPlan] = useState(false);
 
   // Load registered folders
   useEffect(() => {
@@ -190,6 +202,85 @@ export const OrganizationManager: React.FC<OrganizationManagerProps> = ({
       setErrorMessage(msg);
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleToggleExpandPlan = (planId: string) => {
+    setExpandedPlanId((prev) => (prev === planId ? null : planId));
+    setEditingItemId(null);
+    setEditDestPath("");
+  };
+
+  const handleStartEditSavedItem = (itemId: string, currentDest: string) => {
+    setEditingItemId(itemId);
+    setEditDestPath(currentDest);
+  };
+
+  const handleSaveEditSavedItem = async (planId: string, itemId: string) => {
+    if (!editDestPath.trim()) return;
+    setIsUpdatingSavedItem(true);
+    setErrorMessage(null);
+    try {
+      await ApiService.updatePlanItem(planId, itemId, editDestPath.trim());
+      setExistingPlans((prev) =>
+        prev.map((p) => {
+          if (p.id !== planId) return p;
+          return {
+            ...p,
+            items: p.items.map((it) =>
+              it.id === itemId
+                ? { ...it, destination_relative_path: editDestPath.trim(), status: "pending", conflict_reason: null }
+                : it
+            ),
+          };
+        })
+      );
+      setEditingItemId(null);
+      setSuccessMessage("Item destination path updated successfully in draft plan.");
+    } catch (err: unknown) {
+      setErrorMessage(err instanceof Error ? err.message : "Failed to update item");
+    } finally {
+      setIsUpdatingSavedItem(false);
+    }
+  };
+
+  const handleDeleteSavedPlanItem = async (planId: string, itemId: string) => {
+    setIsUpdatingSavedItem(true);
+    setErrorMessage(null);
+    try {
+      await ApiService.deletePlanItem(planId, itemId);
+      setExistingPlans((prev) =>
+        prev.map((p) => {
+          if (p.id !== planId) return p;
+          return {
+            ...p,
+            items: p.items.filter((it) => it.id !== itemId),
+          };
+        })
+      );
+      setSuccessMessage("Item removed from draft plan.");
+    } catch (err: unknown) {
+      setErrorMessage(err instanceof Error ? err.message : "Failed to delete item");
+    } finally {
+      setIsUpdatingSavedItem(false);
+    }
+  };
+
+  const handleSubmitSavedDraftPlan = async (planId: string) => {
+    setIsSubmittingSavedPlan(true);
+    setErrorMessage(null);
+    try {
+      await ApiService.submitPlan(planId);
+      setExistingPlans((prev) =>
+        prev.map((p) => (p.id === planId ? { ...p, status: "pending_review" } : p))
+      );
+      setSuccessMessage(
+        "Draft plan submitted to Review Changes! It is now visible in the Review Changes preview."
+      );
+    } catch (err: unknown) {
+      setErrorMessage(err instanceof Error ? err.message : "Failed to submit plan");
+    } finally {
+      setIsSubmittingSavedPlan(false);
     }
   };
 
@@ -375,7 +466,12 @@ export const OrganizationManager: React.FC<OrganizationManagerProps> = ({
       {activeTab === "review" && (
         <div className="p-5 rounded-xl border border-border bg-card shadow-sm space-y-4">
           <div className="flex items-center justify-between pb-3 border-b border-border/60">
-            <h3 className="font-semibold text-sm text-foreground">Saved Organization Plans</h3>
+            <div>
+              <h3 className="font-semibold text-sm text-foreground">Saved Organization Plans</h3>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Plans in Draft status can be edited and pruned here, and will only appear in Preview/Review Changes after submission.
+              </p>
+            </div>
             <span className="text-xs text-muted-foreground">{existingPlans.length} plans</span>
           </div>
 
@@ -384,20 +480,209 @@ export const OrganizationManager: React.FC<OrganizationManagerProps> = ({
               No organization change plans found. Generate a plan using the Create Plan tab.
             </p>
           ) : (
-            <div className="divide-y divide-border/60">
-              {existingPlans.map((plan) => (
-                <div key={plan.id} className="py-3 flex items-center justify-between text-xs">
-                  <div>
-                    <h4 className="font-semibold text-foreground">{plan.title}</h4>
-                    <p className="text-muted-foreground text-[11px] mt-0.5">
-                      Created {formatDate(plan.created_at)} • {plan.items.length} operations
-                    </p>
+            <div className="space-y-3">
+              {existingPlans.map((plan) => {
+                const isExpanded = expandedPlanId === plan.id;
+                const isDraft = plan.status === "draft";
+
+                return (
+                  <div
+                    key={plan.id}
+                    className="border border-border/70 rounded-xl overflow-hidden bg-card/40 transition-all text-xs"
+                  >
+                    {/* Header Row */}
+                    <div className="p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-muted/20">
+                      <div className="flex items-start gap-2.5 min-w-0">
+                        <button
+                          type="button"
+                          onClick={() => handleToggleExpandPlan(plan.id)}
+                          className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors shrink-0 mt-0.5"
+                          title={isExpanded ? "Collapse" : "Expand items"}
+                        >
+                          {isExpanded ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+                        </button>
+                        <div className="min-w-0">
+                          <h4 className="font-semibold text-foreground text-sm truncate">{plan.title}</h4>
+                          <p className="text-muted-foreground text-[11px] mt-0.5">
+                            Created {formatDate(plan.created_at)} • {plan.items.length} operations
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 self-end sm:self-auto shrink-0">
+                        {isDraft ? (
+                          <span className="px-2.5 py-1 rounded-full text-[11px] font-semibold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
+                            Draft (Editable • Not in Preview)
+                          </span>
+                        ) : plan.status === "pending_review" ? (
+                          <span className="px-2.5 py-1 rounded-full text-[11px] font-semibold bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20">
+                            In Review (In Preview)
+                          </span>
+                        ) : plan.status === "approved" ? (
+                          <span className="px-2.5 py-1 rounded-full text-[11px] font-semibold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                            Approved
+                          </span>
+                        ) : (
+                          <span className="capitalize px-2.5 py-1 rounded-full text-[11px] font-semibold bg-muted text-foreground">
+                            {plan.status.replace("_", " ")}
+                          </span>
+                        )}
+
+                        {isDraft && (
+                          <button
+                            type="button"
+                            onClick={() => handleSubmitSavedDraftPlan(plan.id)}
+                            disabled={isSubmittingSavedPlan}
+                            className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-semibold bg-primary text-primary-foreground hover:bg-primary/90 transition-colors shadow-xs disabled:opacity-50"
+                            title="Submit plan to Review Changes"
+                          >
+                            <Send size={12} />
+                            <span>Submit to Preview</span>
+                          </button>
+                        )}
+
+                        {!isDraft && onNavigateToReviewChanges && (
+                          <button
+                            type="button"
+                            onClick={onNavigateToReviewChanges}
+                            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium bg-muted hover:bg-accent text-foreground transition-colors"
+                          >
+                            <span>Open in Review Changes</span>
+                            <ArrowRight size={12} />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Expandable Plan Items Table */}
+                    {isExpanded && (
+                      <div className="border-t border-border/60 p-4 space-y-3 bg-card/60">
+                        {isDraft ? (
+                          <div className="p-2.5 rounded-lg bg-amber-500/5 border border-amber-500/20 text-[11px] text-amber-700 dark:text-amber-300">
+                            <strong>Draf Rencana:</strong> Item di bawah ini dapat Anda edit nama tujuannya atau dihapus sebelum diajukan. Rencana ini belum muncul di halaman Preview/Review Changes.
+                          </div>
+                        ) : (
+                          <div className="p-2.5 rounded-lg bg-blue-500/5 border border-blue-500/20 text-[11px] text-blue-700 dark:text-blue-300">
+                            Rencana ini telah diajukan dan sedang aktif dalam tahap review / eksekusi.
+                          </div>
+                        )}
+
+                        {plan.items.length === 0 ? (
+                          <p className="text-center py-4 text-xs text-muted-foreground">Tidak ada item dalam rencana ini.</p>
+                        ) : (
+                          <div className="border border-border/60 rounded-lg overflow-x-auto">
+                            <table className="w-full text-left text-xs border-collapse">
+                              <thead>
+                                <tr className="border-b border-border/60 bg-muted/40 text-[11px] font-semibold text-muted-foreground">
+                                  <th className="py-2 px-3">Operation</th>
+                                  <th className="py-2 px-3">Source Relative Path</th>
+                                  <th className="py-2 px-3">Destination Relative Path</th>
+                                  <th className="py-2 px-3">Status</th>
+                                  {isDraft && <th className="py-2 px-3 text-right">Actions</th>}
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-border/40">
+                                {plan.items.map((it) => {
+                                  const isEditing = editingItemId === it.id;
+
+                                  return (
+                                    <tr key={it.id} className="hover:bg-muted/30 transition-colors">
+                                      <td className="py-2 px-3 shrink-0">
+                                        <span className={cn(
+                                          "px-2 py-0.5 rounded text-[10px] font-semibold capitalize",
+                                          it.operation === "move"
+                                            ? "bg-blue-500/10 text-blue-600 dark:text-blue-400"
+                                            : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                                        )}>
+                                          {it.operation.replace("_", " ")}
+                                        </span>
+                                      </td>
+                                      <td className="py-2 px-3 font-mono text-[11px] text-foreground max-w-[200px] truncate" title={it.source_relative_path || "(none)"}>
+                                        {it.source_relative_path || <span className="text-muted-foreground italic">(new directory)</span>}
+                                      </td>
+                                      <td className="py-2 px-3 font-mono text-[11px] text-foreground min-w-[240px]">
+                                        {isEditing ? (
+                                          <div className="flex items-center gap-1.5">
+                                            <input
+                                              type="text"
+                                              value={editDestPath}
+                                              onChange={(e) => setEditDestPath(e.target.value)}
+                                              className="w-full px-2 py-1 rounded border border-primary bg-background text-foreground text-xs font-mono"
+                                              disabled={isUpdatingSavedItem}
+                                              autoFocus
+                                            />
+                                            <button
+                                              type="button"
+                                              onClick={() => handleSaveEditSavedItem(plan.id, it.id)}
+                                              disabled={isUpdatingSavedItem}
+                                              className="p-1 rounded bg-primary text-primary-foreground hover:bg-primary/90"
+                                              title="Save"
+                                            >
+                                              <Check size={13} />
+                                            </button>
+                                            <button
+                                              type="button"
+                                              onClick={() => setEditingItemId(null)}
+                                              className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground"
+                                              title="Cancel"
+                                            >
+                                              <X size={13} />
+                                            </button>
+                                          </div>
+                                        ) : (
+                                          <div className="flex items-center justify-between gap-2">
+                                            <span className="truncate" title={it.destination_relative_path || ""}>
+                                              {it.destination_relative_path}
+                                            </span>
+                                            {isDraft && (
+                                              <button
+                                                type="button"
+                                                onClick={() => handleStartEditSavedItem(it.id, it.destination_relative_path || "")}
+                                                className="p-1 rounded text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors shrink-0"
+                                                title="Edit destination path"
+                                              >
+                                                <Pencil size={12} />
+                                              </button>
+                                            )}
+                                          </div>
+                                        )}
+                                      </td>
+                                      <td className="py-2 px-3">
+                                        {it.conflict_reason || it.status === "conflict" ? (
+                                          <span className="text-[10px] text-destructive bg-destructive/10 px-1.5 py-0.5 rounded font-medium">
+                                            {it.conflict_reason || "Conflict"}
+                                          </span>
+                                        ) : (
+                                          <span className="text-[10px] text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded font-medium">
+                                            Ready
+                                          </span>
+                                        )}
+                                      </td>
+                                      {isDraft && (
+                                        <td className="py-2 px-3 text-right">
+                                          <button
+                                            type="button"
+                                            onClick={() => handleDeleteSavedPlanItem(plan.id, it.id)}
+                                            disabled={isUpdatingSavedItem}
+                                            className="p-1 rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                                            title="Delete item from draft"
+                                          >
+                                            <Trash2 size={13} />
+                                          </button>
+                                        </td>
+                                      )}
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
-                  <span className="capitalize px-2.5 py-1 rounded-full text-[11px] font-semibold bg-muted text-foreground">
-                    {plan.status.replace("_", " ")}
-                  </span>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>

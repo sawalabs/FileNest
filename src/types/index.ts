@@ -446,6 +446,8 @@ export interface SmartRenamePlanResult {
   files_unchanged_count: number;
   conflicts_count: number;
   total_size_bytes: number;
+  protected_folders_skipped_count?: number;
+  protected_folders_skipped?: string[];
   items: SmartRenamePreviewItem[];
 }
 

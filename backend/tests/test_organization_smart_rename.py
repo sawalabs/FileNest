@@ -338,3 +338,148 @@ async def test_quick_ocr_suggest_endpoint(async_client: AsyncClient, tmp_path: P
     assert "offline" not in data["proposed_name"].lower()
 
 
+@pytest.mark.asyncio
+async def test_draft_plans_stay_draft_and_editable_until_submit(async_client: AsyncClient, tmp_path: Path):
+    """FNE-59, FNE-60, FNE-62: Verify Organization and Smart Rename plans stay in draft,
+    can be edited and pruned while in draft, and transition to pending_review only upon submit."""
+    folder_root = tmp_path / "DraftEditFolder"
+    folder_root.mkdir()
+
+    # Create dummy files
+    (folder_root / "report.pdf").write_text("dummy pdf", encoding="utf-8")
+    (folder_root / "data.xlsx").write_text("dummy xlsx", encoding="utf-8")
+    (folder_root / "photo.jpg").write_text("dummy jpg", encoding="utf-8")
+
+    reg_resp = await async_client.post(
+        "/api/v1/folders/register",
+        json={"name": "Draft Edit Folder", "root_path": str(folder_root)},
+    )
+    assert reg_resp.status_code == 201
+    folder_id = reg_resp.json()["id"]
+
+    # 1. Generate Organization Plan -> status must be 'draft'
+    org_resp = await async_client.post(
+        "/api/v1/organization/plan",
+        json={
+            "managed_folder_id": folder_id,
+            "strategy": "by_category",
+            "move_unorganized_only": True,
+            "include_subfolders": False,
+        },
+    )
+    assert org_resp.status_code == 201
+    org_plan = org_resp.json()
+    assert org_plan["status"] == "draft"
+    org_plan_id = org_plan["change_plan_id"]
+    assert len(org_plan["items"]) > 0
+
+    first_item = org_plan["items"][0]
+    first_item_id = first_item["item_id"]
+
+    # 2. Edit draft plan item destination path
+    edit_resp = await async_client.put(
+        f"/api/v1/transactions/plans/{org_plan_id}/items/{first_item_id}",
+        json={"new_destination_relative_path": "CustomCategory/renamed_target.pdf"},
+    )
+    assert edit_resp.status_code == 200
+    assert edit_resp.json()["destination_relative_path"] == "CustomCategory/renamed_target.pdf"
+
+    # 3. Delete an item from draft plan
+    if len(org_plan["items"]) > 1:
+        second_item_id = org_plan["items"][1]["item_id"]
+        del_resp = await async_client.delete(f"/api/v1/transactions/plans/{org_plan_id}/items/{second_item_id}")
+        assert del_resp.status_code == 204
+
+    # 4. Check plan still in draft status before submit
+    get_plan_resp = await async_client.get(f"/api/v1/transactions/plans/{org_plan_id}")
+    assert get_plan_resp.status_code == 200
+    assert get_plan_resp.json()["status"] == "draft"
+
+    # 5. Submit plan -> transitions to pending_review (entering Review Changes / Preview)
+    submit_resp = await async_client.post(f"/api/v1/transactions/plans/{org_plan_id}/submit")
+    assert submit_resp.status_code == 200
+    assert submit_resp.json()["status"] == "pending_review"
+
+    # 6. Generate Smart Rename Plan -> status must be 'draft'
+    rename_resp = await async_client.post(
+        "/api/v1/smart-rename/plan",
+        json={
+            "managed_folder_id": folder_id,
+            "strategy": "make_consistent",
+            "case_transform": "lower",
+            "space_replacement": "_",
+            "skip_compliant_files": False,
+        },
+    )
+    assert rename_resp.status_code == 201
+    rename_plan = rename_resp.json()
+    assert rename_plan["status"] == "draft"
+    rename_plan_id = rename_plan["change_plan_id"]
+
+    # Edit rename item destination in draft
+    r_item_id = rename_plan["items"][0]["item_id"]
+    r_edit = await async_client.put(
+        f"/api/v1/transactions/plans/{rename_plan_id}/items/{r_item_id}",
+        json={"new_destination_relative_path": "custom_name_edited.pdf"},
+    )
+    assert r_edit.status_code == 200
+    assert r_edit.json()["destination_relative_path"] == "custom_name_edited.pdf"
+
+    # Submit rename plan
+    r_submit = await async_client.post(f"/api/v1/transactions/plans/{rename_plan_id}/submit")
+    assert r_submit.status_code == 200
+    assert r_submit.json()["status"] == "pending_review"
+
+
+@pytest.mark.asyncio
+async def test_smart_rename_skips_protected_folders_and_reports(async_client: AsyncClient, tmp_path: Path):
+    """FNE-61: Verify Smart Rename skips files inside protected folders and reports them."""
+    folder_root = tmp_path / "ProtectedRenameFolder"
+    folder_root.mkdir()
+
+    # Create root file
+    (folder_root / "normal_file.txt").write_text("normal file", encoding="utf-8")
+
+    # Create protected subfolder and file inside it
+    protected_sub = folder_root / "Secrets"
+    protected_sub.mkdir()
+    (protected_sub / "classified_doc.txt").write_text("secret doc", encoding="utf-8")
+
+    reg_resp = await async_client.post(
+        "/api/v1/folders/register",
+        json={"name": "Protected Rename Folder", "root_path": str(folder_root)},
+    )
+    assert reg_resp.status_code == 201
+    folder_id = reg_resp.json()["id"]
+
+    # Add 'Secrets' as protected folder
+    add_prot_resp = await async_client.post(
+        f"/api/v1/organization/protected-folders/{folder_id}",
+        json={"relative_path": "Secrets", "reason": "Secret keys", "category": "custom"},
+    )
+    assert add_prot_resp.status_code == 201
+
+    # Generate smart rename plan
+    plan_resp = await async_client.post(
+        "/api/v1/smart-rename/plan",
+        json={
+            "managed_folder_id": folder_id,
+            "strategy": "make_consistent",
+            "case_transform": "upper",
+            "space_replacement": "_",
+            "skip_compliant_files": False,
+        },
+    )
+    assert plan_resp.status_code == 201
+    data = plan_resp.json()
+
+    # Verify classified_doc.txt is skipped
+    src_paths = [it["source_relative_path"] for it in data["items"]]
+    assert "normal_file.txt" in src_paths
+    assert not any("classified_doc.txt" in p for p in src_paths)
+
+    # Verify protected folders are reported
+    assert data["protected_folders_skipped_count"] >= 1
+    assert any("secrets" in p.lower() for p in data["protected_folders_skipped"])
+
+

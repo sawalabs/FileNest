@@ -9,6 +9,12 @@ import {
   AlertCircle,
   ArrowRight,
   RefreshCw,
+  ChevronDown,
+  ChevronRight,
+  Pencil,
+  Trash2,
+  Check,
+  Send,
   X,
 } from "lucide-react";
 import { ApiService } from "@/services/api";
@@ -18,9 +24,11 @@ import type {
   SmartRenamePlanRequest,
   SmartRenamePlanResult,
   ChangePlanResponse,
+  ChangePlanItemResponse,
   RuleExecutionResponse,
 } from "@/types";
 import { OrganizationRulesPanel } from "@/features/organization/OrganizationRulesPanel";
+import { ProtectedFoldersCard } from "@/features/organization/ProtectedFoldersCard";
 import { SmartRenameConfigPanel } from "./SmartRenameConfigPanel";
 import { SmartRenameSummaryCards } from "./SmartRenameSummaryCards";
 import { SmartRenamePreviewTable } from "./SmartRenamePreviewTable";
@@ -47,6 +55,12 @@ export const SmartRenameManager: React.FC<SmartRenameManagerProps> = ({
   const [isHistoryLoading, setIsHistoryLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+
+  const [expandedPlanId, setExpandedPlanId] = useState<string | null>(null);
+  const [editingItemId, setEditingItemId] = useState<string | null>(null);
+  const [editProposedName, setEditProposedName] = useState<string>("");
+  const [isUpdatingSavedItem, setIsUpdatingSavedItem] = useState(false);
+  const [isSubmittingSavedPlan, setIsSubmittingSavedPlan] = useState(false);
 
   useEffect(() => {
     ApiService.listFolders()
@@ -230,6 +244,91 @@ export const SmartRenameManager: React.FC<SmartRenameManagerProps> = ({
     }
   };
 
+  const handleToggleExpandPlan = (planId: string) => {
+    setExpandedPlanId((prev) => (prev === planId ? null : planId));
+    setEditingItemId(null);
+    setEditProposedName("");
+  };
+
+  const handleStartEditSavedItem = (itemId: string, currentDest: string) => {
+    setEditingItemId(itemId);
+    const fileName = currentDest.split("/").pop() || currentDest;
+    setEditProposedName(fileName);
+  };
+
+  const handleSaveEditSavedItem = async (plan: ChangePlanResponse, item: ChangePlanItemResponse) => {
+    if (!editProposedName.trim()) return;
+    setIsUpdatingSavedItem(true);
+    setErrorMessage(null);
+    try {
+      const parentDir = item.source_relative_path?.includes("/")
+        ? item.source_relative_path.substring(0, item.source_relative_path.lastIndexOf("/"))
+        : "";
+      const newDestRel = parentDir ? `${parentDir}/${editProposedName.trim()}` : editProposedName.trim();
+
+      await ApiService.updatePlanItem(plan.id, item.id, newDestRel);
+      setExistingPlans((prev) =>
+        prev.map((p) => {
+          if (p.id !== plan.id) return p;
+          return {
+            ...p,
+            items: p.items.map((it) =>
+              it.id === item.id
+                ? { ...it, destination_relative_path: newDestRel, status: "pending", conflict_reason: null }
+                : it
+            ),
+          };
+        })
+      );
+      setEditingItemId(null);
+      setSuccessMessage("Nama berkas berhasil diperbarui dalam draf rencana.");
+    } catch (err: unknown) {
+      setErrorMessage(err instanceof Error ? err.message : "Failed to update item name");
+    } finally {
+      setIsUpdatingSavedItem(false);
+    }
+  };
+
+  const handleDeleteSavedPlanItem = async (planId: string, itemId: string) => {
+    setIsUpdatingSavedItem(true);
+    setErrorMessage(null);
+    try {
+      await ApiService.deletePlanItem(planId, itemId);
+      setExistingPlans((prev) =>
+        prev.map((p) => {
+          if (p.id !== planId) return p;
+          return {
+            ...p,
+            items: p.items.filter((it) => it.id !== itemId),
+          };
+        })
+      );
+      setSuccessMessage("Item berhasil dihapus dari draf rencana.");
+    } catch (err: unknown) {
+      setErrorMessage(err instanceof Error ? err.message : "Failed to delete item");
+    } finally {
+      setIsUpdatingSavedItem(false);
+    }
+  };
+
+  const handleSubmitSavedDraftPlan = async (planId: string) => {
+    setIsSubmittingSavedPlan(true);
+    setErrorMessage(null);
+    try {
+      await ApiService.submitPlan(planId);
+      setExistingPlans((prev) =>
+        prev.map((p) => (p.id === planId ? { ...p, status: "pending_review" } : p))
+      );
+      setSuccessMessage(
+        "Draft rename plan submitted to Review Changes! It is now visible in the Review Changes preview."
+      );
+    } catch (err: unknown) {
+      setErrorMessage(err instanceof Error ? err.message : "Failed to submit plan");
+    } finally {
+      setIsSubmittingSavedPlan(false);
+    }
+  };
+
   return (
     <div className="h-full w-full flex flex-col min-h-0 overflow-hidden bg-background">
       {/* Top Header Bar — Flush to top edge (h-14 border-b border-border) */}
@@ -355,6 +454,8 @@ export const SmartRenameManager: React.FC<SmartRenameManagerProps> = ({
           </div>
 
           <div className="lg:col-span-7 space-y-5">
+            <ProtectedFoldersCard folderId={selectedFolderId} />
+
             {!planResult ? (
               <div className="p-12 text-center border border-dashed border-border rounded-xl bg-card/40 space-y-3">
                 <div className="w-12 h-12 rounded-full bg-primary/10 text-primary flex items-center justify-center mx-auto">
@@ -369,6 +470,16 @@ export const SmartRenameManager: React.FC<SmartRenameManagerProps> = ({
               </div>
             ) : (
               <>
+                {planResult.protected_folders_skipped && planResult.protected_folders_skipped.length > 0 && (
+                  <div className="p-3 rounded-xl bg-primary/5 border border-primary/20 text-xs text-foreground flex items-center justify-between gap-2">
+                    <span>
+                      <strong>{planResult.protected_folders_skipped.length} protected folder</strong> dilewati agar isinya tetap utuh:{" "}
+                      <span className="font-mono text-primary">
+                        {planResult.protected_folders_skipped.join(", ")}
+                      </span>
+                    </span>
+                  </div>
+                )}
                 <SmartRenameSummaryCards data={planResult} />
                 <SmartRenamePreviewTable
                   planId={planResult.change_plan_id}
@@ -395,7 +506,12 @@ export const SmartRenameManager: React.FC<SmartRenameManagerProps> = ({
       {activeTab === "review" && (
         <div className="p-5 rounded-xl border border-border bg-card shadow-sm space-y-4">
           <div className="flex items-center justify-between pb-3 border-b border-border/60">
-            <h3 className="font-semibold text-sm text-foreground">Saved Rename Plans</h3>
+            <div>
+              <h3 className="font-semibold text-sm text-foreground">Saved Rename Plans</h3>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Plans in Draft status can be edited and pruned here, and will only appear in Preview/Review Changes after submission.
+              </p>
+            </div>
             <span className="text-xs text-muted-foreground">{existingPlans.length} plans</span>
           </div>
 
@@ -404,20 +520,200 @@ export const SmartRenameManager: React.FC<SmartRenameManagerProps> = ({
               No rename change plans found. Generate a plan using the Create Plan tab.
             </p>
           ) : (
-            <div className="divide-y divide-border/60">
-              {existingPlans.map((plan) => (
-                <div key={plan.id} className="py-3 flex items-center justify-between text-xs">
-                  <div>
-                    <h4 className="font-semibold text-foreground">{plan.title}</h4>
-                    <p className="text-muted-foreground text-[11px] mt-0.5">
-                      Created {formatDate(plan.created_at)} • {plan.items.length} operations
-                    </p>
+            <div className="space-y-3">
+              {existingPlans.map((plan) => {
+                const isExpanded = expandedPlanId === plan.id;
+                const isDraft = plan.status === "draft";
+
+                return (
+                  <div
+                    key={plan.id}
+                    className="border border-border/70 rounded-xl overflow-hidden bg-card/40 transition-all text-xs"
+                  >
+                    {/* Header Row */}
+                    <div className="p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-muted/20">
+                      <div className="flex items-start gap-2.5 min-w-0">
+                        <button
+                          type="button"
+                          onClick={() => handleToggleExpandPlan(plan.id)}
+                          className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors shrink-0 mt-0.5"
+                          title={isExpanded ? "Collapse" : "Expand items"}
+                        >
+                          {isExpanded ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+                        </button>
+                        <div className="min-w-0">
+                          <h4 className="font-semibold text-foreground text-sm truncate">{plan.title}</h4>
+                          <p className="text-muted-foreground text-[11px] mt-0.5">
+                            Created {formatDate(plan.created_at)} • {plan.items.length} files to rename
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 self-end sm:self-auto shrink-0">
+                        {isDraft ? (
+                          <span className="px-2.5 py-1 rounded-full text-[11px] font-semibold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
+                            Draft (Editable • Not in Preview)
+                          </span>
+                        ) : plan.status === "pending_review" ? (
+                          <span className="px-2.5 py-1 rounded-full text-[11px] font-semibold bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20">
+                            In Review (In Preview)
+                          </span>
+                        ) : plan.status === "approved" ? (
+                          <span className="px-2.5 py-1 rounded-full text-[11px] font-semibold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                            Approved
+                          </span>
+                        ) : (
+                          <span className="capitalize px-2.5 py-1 rounded-full text-[11px] font-semibold bg-muted text-foreground">
+                            {plan.status.replace("_", " ")}
+                          </span>
+                        )}
+
+                        {isDraft && (
+                          <button
+                            type="button"
+                            onClick={() => handleSubmitSavedDraftPlan(plan.id)}
+                            disabled={isSubmittingSavedPlan}
+                            className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-semibold bg-primary text-primary-foreground hover:bg-primary/90 transition-colors shadow-xs disabled:opacity-50"
+                            title="Submit plan to Review Changes"
+                          >
+                            <Send size={12} />
+                            <span>Submit to Preview</span>
+                          </button>
+                        )}
+
+                        {!isDraft && onNavigateToReviewChanges && (
+                          <button
+                            type="button"
+                            onClick={onNavigateToReviewChanges}
+                            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium bg-muted hover:bg-accent text-foreground transition-colors"
+                          >
+                            <span>Open in Review Changes</span>
+                            <ArrowRight size={12} />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Expandable Plan Items Table */}
+                    {isExpanded && (
+                      <div className="border-t border-border/60 p-4 space-y-3 bg-card/60">
+                        {isDraft ? (
+                          <div className="p-2.5 rounded-lg bg-amber-500/5 border border-amber-500/20 text-[11px] text-amber-700 dark:text-amber-300">
+                            <strong>Draf Rencana Smart Rename:</strong> Anda dapat mengedit nama baru atau menghapus file dari rencana ini sebelum diajukan ke Review Changes.
+                          </div>
+                        ) : (
+                          <div className="p-2.5 rounded-lg bg-blue-500/5 border border-blue-500/20 text-[11px] text-blue-700 dark:text-blue-300">
+                            Rencana ini telah diajukan dan sedang aktif dalam tahap review / eksekusi.
+                          </div>
+                        )}
+
+                        {plan.items.length === 0 ? (
+                          <p className="text-center py-4 text-xs text-muted-foreground">Tidak ada berkas dalam rencana ini.</p>
+                        ) : (
+                          <div className="border border-border/60 rounded-lg overflow-x-auto">
+                            <table className="w-full text-left text-xs border-collapse">
+                              <thead>
+                                <tr className="border-b border-border/60 bg-muted/40 text-[11px] font-semibold text-muted-foreground">
+                                  <th className="py-2 px-3">Original File</th>
+                                  <th className="py-2 px-3">Proposed New Name</th>
+                                  <th className="py-2 px-3">Status</th>
+                                  {isDraft && <th className="py-2 px-3 text-right">Actions</th>}
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-border/40">
+                                {plan.items.map((it) => {
+                                  const isEditing = editingItemId === it.id;
+                                  const origFileName = it.source_relative_path?.split("/").pop() || "";
+                                  const proposedFileName = it.destination_relative_path?.split("/").pop() || "";
+
+                                  return (
+                                    <tr key={it.id} className="hover:bg-muted/30 transition-colors">
+                                      <td className="py-2 px-3 font-mono text-[11px] text-foreground max-w-[220px] truncate" title={it.source_relative_path || ""}>
+                                        {origFileName}
+                                      </td>
+                                      <td className="py-2 px-3 font-mono text-[11px] text-foreground min-w-[260px]">
+                                        {isEditing ? (
+                                          <div className="flex items-center gap-1.5">
+                                            <input
+                                              type="text"
+                                              value={editProposedName}
+                                              onChange={(e) => setEditProposedName(e.target.value)}
+                                              className="w-full px-2 py-1 rounded border border-primary bg-background text-foreground text-xs font-mono"
+                                              disabled={isUpdatingSavedItem}
+                                              autoFocus
+                                            />
+                                            <button
+                                              type="button"
+                                              onClick={() => handleSaveEditSavedItem(plan, it)}
+                                              disabled={isUpdatingSavedItem}
+                                              className="p-1 rounded bg-primary text-primary-foreground hover:bg-primary/90"
+                                              title="Save"
+                                            >
+                                              <Check size={13} />
+                                            </button>
+                                            <button
+                                              type="button"
+                                              onClick={() => setEditingItemId(null)}
+                                              className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground"
+                                              title="Cancel"
+                                            >
+                                              <X size={13} />
+                                            </button>
+                                          </div>
+                                        ) : (
+                                          <div className="flex items-center justify-between gap-2">
+                                            <span className="truncate text-primary font-medium" title={proposedFileName}>
+                                              {proposedFileName}
+                                            </span>
+                                            {isDraft && (
+                                              <button
+                                                type="button"
+                                                onClick={() => handleStartEditSavedItem(it.id, proposedFileName)}
+                                                className="p-1 rounded text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors shrink-0"
+                                                title="Edit proposed filename"
+                                              >
+                                                <Pencil size={12} />
+                                              </button>
+                                            )}
+                                          </div>
+                                        )}
+                                      </td>
+                                      <td className="py-2 px-3">
+                                        {it.conflict_reason || it.status === "conflict" ? (
+                                          <span className="text-[10px] text-destructive bg-destructive/10 px-1.5 py-0.5 rounded font-medium">
+                                            {it.conflict_reason || "Conflict"}
+                                          </span>
+                                        ) : (
+                                          <span className="text-[10px] text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded font-medium">
+                                            Ready
+                                          </span>
+                                        )}
+                                      </td>
+                                      {isDraft && (
+                                        <td className="py-2 px-3 text-right">
+                                          <button
+                                            type="button"
+                                            onClick={() => handleDeleteSavedPlanItem(plan.id, it.id)}
+                                            disabled={isUpdatingSavedItem}
+                                            className="p-1 rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                                            title="Delete file from rename plan"
+                                          >
+                                            <Trash2 size={13} />
+                                          </button>
+                                        </td>
+                                      )}
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
-                  <span className="capitalize px-2.5 py-1 rounded-full text-[11px] font-semibold bg-muted text-foreground">
-                    {plan.status.replace("_", " ")}
-                  </span>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>

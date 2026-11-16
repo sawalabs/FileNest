@@ -90,6 +90,8 @@ class SmartRenamePlanResult(BaseModel):
     files_unchanged_count: int = 0
     conflicts_count: int = 0
     total_size_bytes: int = 0
+    protected_folders_skipped_count: int = 0
+    protected_folders_skipped: List[str] = []
 
     items: List[SmartRenamePreviewItem] = []
 

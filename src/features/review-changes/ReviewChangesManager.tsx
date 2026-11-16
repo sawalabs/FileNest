@@ -97,7 +97,10 @@ export const ReviewChangesManager: React.FC = () => {
         ApiService.listPlans(),
         ApiService.listFolders(),
       ]);
-      setPlans(fetchedPlans);
+      // Exclude draft plans from Review Changes (Preview).
+      // Plans from Organization and Smart Rename remain as drafts until submitted for review.
+      const submittedPlans = fetchedPlans.filter((p) => p.status !== "draft");
+      setPlans(submittedPlans);
       setFolders(fetchedFolders);
       setSelectedItemKeys(new Set());
       setLastUpdated(new Date().toLocaleTimeString());
@@ -124,9 +127,9 @@ export const ReviewChangesManager: React.FC = () => {
     let all = 0;
 
     plans.forEach((p) => {
-      if (p.items.length === 0) return;
+      if (p.items.length === 0 || p.status === "draft") return;
       all++;
-      if (p.status === "draft" || p.status === "pending_review") pending++;
+      if (p.status === "pending_review") pending++;
       else if (p.status === "approved") approved++;
       else if (p.status === "completed") executed++;
       else if (p.status === "rejected") rejected++;
@@ -143,20 +146,20 @@ export const ReviewChangesManager: React.FC = () => {
 
   // Plans belonging to the currently active status tab
   const plansInActiveTab = useMemo(() => {
-    const nonEmptyPlans = plans.filter((p) => p.items.length > 0);
+    const validPlans = plans.filter((p) => p.items.length > 0 && p.status !== "draft");
     if (activeTab === "pending") {
-      return nonEmptyPlans.filter((p) => ["draft", "pending_review"].includes(p.status));
+      return validPlans.filter((p) => p.status === "pending_review");
     }
     if (activeTab === "approved") {
-      return nonEmptyPlans.filter((p) => p.status === "approved");
+      return validPlans.filter((p) => p.status === "approved");
     }
     if (activeTab === "executed") {
-      return nonEmptyPlans.filter((p) => p.status === "completed");
+      return validPlans.filter((p) => p.status === "completed");
     }
     if (activeTab === "rejected") {
-      return nonEmptyPlans.filter((p) => p.status === "rejected");
+      return validPlans.filter((p) => p.status === "rejected");
     }
-    return nonEmptyPlans;
+    return validPlans;
   }, [plans, activeTab]);
 
   // Currently selected plan object within the active tab (if not "all")
@@ -195,7 +198,8 @@ export const ReviewChangesManager: React.FC = () => {
     let conflicts = 0;
 
     plans.forEach((p) => {
-      if (p.status === "draft" || p.status === "pending_review") {
+      if (p.status === "draft") return;
+      if (p.status === "pending_review") {
         pending += p.items.length;
       }
       p.items.forEach((item) => {
@@ -216,6 +220,7 @@ export const ReviewChangesManager: React.FC = () => {
   const allFlattenedItems = useMemo<FlattenedChangeItem[]>(() => {
     const list: FlattenedChangeItem[] = [];
     plans.forEach((plan) => {
+      if (plan.status === "draft") return;
       plan.items.forEach((item) => {
         list.push({
           planId: plan.id,
@@ -242,7 +247,7 @@ export const ReviewChangesManager: React.FC = () => {
       }
 
       // 1. Tab filter (always enforce active tab status so executed/rejected plans never linger on Pending)
-      if (activeTab === "pending" && !["draft", "pending_review"].includes(planStatus)) {
+      if (activeTab === "pending" && planStatus !== "pending_review") {
         return false;
       }
       if (activeTab === "approved" && planStatus !== "approved") {
