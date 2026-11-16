@@ -20,10 +20,20 @@ const ToastItem: React.FC<ToastItemProps> = ({ notification, onDismiss, onNaviga
 
   const isSuccess = notification.status === "completed";
 
+  const handleCardClick = () => {
+    if (isSuccess) {
+      onNavigate(notification.job_id);
+      onDismiss(notification.id);
+    }
+  };
+
   return (
     <div
       role="alert"
-      className="max-w-md w-[92vw] sm:w-[380px] bg-card/98 backdrop-blur-xl border border-border shadow-2xl rounded-xl p-3.5 flex items-start gap-3 transition-all duration-300 animate-in fade-in slide-in-from-right-3 hover:border-primary/40 select-none"
+      onClick={handleCardClick}
+      className={`max-w-md w-[92vw] sm:w-[380px] bg-card/98 backdrop-blur-xl border border-border shadow-2xl rounded-xl p-3.5 flex items-start gap-3 transition-all duration-300 animate-in fade-in slide-in-from-right-3 hover:border-primary/40 select-none ${
+        isSuccess ? "cursor-pointer hover:bg-muted/30" : ""
+      }`}
     >
       <div className="mt-0.5 shrink-0">
         {isSuccess ? (
@@ -34,9 +44,22 @@ const ToastItem: React.FC<ToastItemProps> = ({ notification, onDismiss, onNaviga
       </div>
 
       <div className="flex-1 min-w-0">
-        <h3 className="text-xs font-semibold text-foreground truncate">
-          {notification.title}
-        </h3>
+        <div className="flex items-center justify-between gap-1">
+          <h3 className="text-xs font-semibold text-foreground truncate">
+            {notification.title}
+          </h3>
+          {notification.target_view && isSuccess && (
+            <span className="text-[10px] uppercase font-semibold px-1.5 py-0.2 rounded bg-primary/10 text-primary shrink-0">
+              {notification.target_view === "smart_rename"
+                ? "Rename"
+                : notification.target_view === "organization"
+                ? "Org"
+                : notification.target_view === "storage"
+                ? "Storage"
+                : "History"}
+            </span>
+          )}
+        </div>
         <p className="text-[11px] text-muted-foreground mt-0.5 line-clamp-2 leading-relaxed">
           {notification.summary}
         </p>
@@ -44,7 +67,8 @@ const ToastItem: React.FC<ToastItemProps> = ({ notification, onDismiss, onNaviga
         {isSuccess && (
           <button
             type="button"
-            onClick={() => {
+            onClick={(e) => {
+              e.stopPropagation();
               onNavigate(notification.job_id);
               onDismiss(notification.id);
             }}
@@ -58,7 +82,10 @@ const ToastItem: React.FC<ToastItemProps> = ({ notification, onDismiss, onNaviga
 
       <button
         type="button"
-        onClick={() => onDismiss(notification.id)}
+        onClick={(e) => {
+          e.stopPropagation();
+          onDismiss(notification.id);
+        }}
         className="p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors shrink-0"
         title="Tutup notifikasi"
       >

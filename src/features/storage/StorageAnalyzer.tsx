@@ -56,8 +56,16 @@ export const StorageAnalyzer: React.FC<StorageAnalyzerProps> = ({
   // Result hydration when job completes in background
   useEffect(() => {
     if (lastCompletedPayload && lastCompletedPayload.jobType === "storage_analysis") {
-      if (lastCompletedPayload.resultPayload) {
-        setAnalysisResult(lastCompletedPayload.resultPayload);
+      let payload = lastCompletedPayload.resultPayload;
+      if (typeof payload === "string") {
+        try {
+          payload = JSON.parse(payload);
+        } catch {
+          // ignore
+        }
+      }
+      if (payload && payload.total_storage_bytes !== undefined) {
+        setAnalysisResult(payload);
       }
       if (lastCompletedPayload.managedFolderId) {
         setSelectedFolderId(lastCompletedPayload.managedFolderId);

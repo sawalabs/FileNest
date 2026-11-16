@@ -46,6 +46,18 @@ const BackgroundTasksContext = createContext<BackgroundTasksContextType | undefi
 const LOCAL_STORAGE_ACTIVE_JOBS_KEY = "fne_active_job_ids";
 const LOCAL_STORAGE_NOTIFS_KEY = "fne_task_notifications";
 
+export const parseJobResultPayload = (payload: any): any => {
+  if (!payload) return null;
+  if (typeof payload === "string") {
+    try {
+      return JSON.parse(payload);
+    } catch {
+      return payload;
+    }
+  }
+  return payload;
+};
+
 export const BackgroundTasksProvider: React.FC<{
   children: React.ReactNode;
   onNavigate?: (item: NavItem) => void;
@@ -146,6 +158,8 @@ export const BackgroundTasksProvider: React.FC<{
             summary = job.error_message || "Terjadi kesalahan saat memproses pekerjaan.";
           }
 
+          const parsedResult = parseJobResultPayload(job.result_payload);
+
           const newNotif: FloatingTaskNotification = {
             id: notifId,
             job_id: job.id,
@@ -154,17 +168,17 @@ export const BackgroundTasksProvider: React.FC<{
             status: job.status as "completed" | "failed",
             summary,
             timestamp: job.finished_at || new Date().toISOString(),
-            result_payload: job.result_payload,
+            result_payload: parsedResult,
             target_view: targetView,
           };
 
           setNotifications((prev) => [newNotif, ...prev.filter((n) => n.job_id !== job.id)]);
 
-          if (job.status === "completed" && job.result_payload) {
+          if (job.status === "completed" && parsedResult) {
             setLastCompletedPayload({
               jobId: job.id,
               jobType: job.job_type,
-              resultPayload: job.result_payload,
+              resultPayload: parsedResult,
               managedFolderId: job.managed_folder_id,
               timestamp: new Date().toISOString(),
             });
@@ -212,19 +226,32 @@ export const BackgroundTasksProvider: React.FC<{
   );
 
   const navigateToJobResult = useCallback(
-    (jobId: string, customNavigate?: (item: NavItem) => void) => {
+    async (jobId: string, customNavigate?: (item: NavItem) => void) => {
       const navFn = customNavigate || onNavigate;
       // Find job in active, recent, or notifications
-      const targetJob =
+      let targetJob =
         recentJobs.find((j) => j.id === jobId) ||
         activeJobs.find((j) => j.id === jobId);
 
+      // If not found in active/recent or result_payload is missing, fetch fresh job from backend API
+      if (!targetJob || !targetJob.result_payload) {
+        try {
+          const freshJob = await ApiService.getJob(jobId);
+          if (freshJob) {
+            targetJob = freshJob;
+          }
+        } catch {
+          // ignore network error, proceed with fallback
+        }
+      }
+
       if (targetJob) {
-        if (targetJob.result_payload) {
+        const parsedResult = parseJobResultPayload(targetJob.result_payload);
+        if (parsedResult) {
           setLastCompletedPayload({
             jobId: targetJob.id,
             jobType: targetJob.job_type,
-            resultPayload: targetJob.result_payload,
+            resultPayload: parsedResult,
             managedFolderId: targetJob.managed_folder_id,
             timestamp: new Date().toISOString(),
           });
@@ -247,16 +274,28 @@ export const BackgroundTasksProvider: React.FC<{
       } else {
         // Fallback to checking notification by job_id
         const notif = notifications.find((n) => n.job_id === jobId);
-        if (notif && navFn) {
-          if (notif.job_type === "storage_analysis") {
-            navFn("storage");
-          } else if (
-            notif.job_type === "smart_rename_plan" ||
-            notif.job_type === "batch_ocr"
-          ) {
-            navFn("smart-rename");
-          } else if (notif.job_type === "organization_plan") {
-            navFn("organization");
+        if (notif) {
+          const parsedResult = parseJobResultPayload(notif.result_payload);
+          if (parsedResult) {
+            setLastCompletedPayload({
+              jobId: notif.job_id,
+              jobType: notif.job_type,
+              resultPayload: parsedResult,
+              managedFolderId: null,
+              timestamp: new Date().toISOString(),
+            });
+          }
+          if (navFn) {
+            if (notif.job_type === "storage_analysis") {
+              navFn("storage");
+            } else if (
+              notif.job_type === "smart_rename_plan" ||
+              notif.job_type === "batch_ocr"
+            ) {
+              navFn("smart-rename");
+            } else if (notif.job_type === "organization_plan") {
+              navFn("organization");
+            }
           }
         }
       }

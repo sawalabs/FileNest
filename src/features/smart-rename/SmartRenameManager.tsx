@@ -75,13 +75,22 @@ export const SmartRenameManager: React.FC<SmartRenameManagerProps> = ({
       (lastCompletedPayload.jobType === "smart_rename_plan" ||
         lastCompletedPayload.jobType === "batch_ocr")
     ) {
-      if (lastCompletedPayload.resultPayload) {
-        if (lastCompletedPayload.resultPayload.change_plan_id) {
-          setPlanResult(lastCompletedPayload.resultPayload);
-          setSuccessMessage("Rencana penamaan cerdas selesai diproses di latar belakang.");
+      let payload = lastCompletedPayload.resultPayload;
+      if (typeof payload === "string") {
+        try {
+          payload = JSON.parse(payload);
+        } catch {
+          // ignore
         }
       }
-      clearCompletedPayload();
+      if (payload && payload.change_plan_id) {
+        setPlanResult(payload);
+        if (lastCompletedPayload.managedFolderId) {
+          setSelectedFolderId(lastCompletedPayload.managedFolderId);
+        }
+        setSuccessMessage("Rencana penamaan cerdas selesai diproses di latar belakang.");
+        clearCompletedPayload();
+      }
     }
   }, [lastCompletedPayload, clearCompletedPayload]);
 
