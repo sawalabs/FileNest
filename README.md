@@ -43,21 +43,23 @@
 
 ## UI Previews
 
-<details>
-<summary>View Application Design Previews (Dashboard, Files, Storage, Organize, Smart Rename, Review Changes, Monitoring, History, Managed Folders, Settings)</summary>
+<details open>
+<summary><b>View Application UI Previews (Click to Expand / Collapse)</b></summary>
 
-| Module | Preview |
-|---|---|
-| **Dashboard Overview** | ![Dashboard](design/01.%20Dashboard/image-1.png) |
-| **Files Manager** | ![Files Manager](design/02.%20Files/image-1.png) |
-| **Storage Analyzer** | ![Storage Analyzer](design/03.%20Storage/image-1.png) |
-| **Organization Planner** | ![Organization](design/04.%20Analyze/image-1.png) |
-| **Smart Rename & OCR** | ![Smart Rename](design/05.%20Smart%20Rename/image-1.png) |
-| **Review Changes** | ![Review Changes](design/06.%20Review%20Changes/image-1.png) |
-| **Real-Time Monitoring** | ![Monitoring](design/07.%20Monitoring/image-1.png) |
-| **Audit & Execution History** | ![History](design/08.%20History/image-1.png) |
-| **Managed Folders** | ![Managed Folders](design/09.%20Manage%20Folder/image-1.png) |
-| **Settings & Security** | ![Settings](design/10.%20Settings/image-1.png) |
+| Module | Preview | Description |
+|---|---|---|
+| **Dashboard Overview** | [![Dashboard](docs/screenshots/01-dashboard.png)](docs/screenshots/01-dashboard.png) | Storage telemetry, 30-day trends, folder breakdown, and background workers |
+| **Files Manager** | [![Files Manager](docs/screenshots/02-files-manager.png)](docs/screenshots/02-files-manager.png) | 3-pane native explorer, bounded preview, metadata inspector, and OCR |
+| **Storage Analyzer** | [![Storage Analyzer](docs/screenshots/03-storage-analyzer.png)](docs/screenshots/03-storage-analyzer.png) | Duplicate hash clustering, large files, file-type distribution, and empty folders |
+| **Organization Planner** | [![Organization](docs/screenshots/04-organization-planner.png)](docs/screenshots/04-organization-planner.png) | Rule-based and categorized restructuring with protected folder detection |
+| **Smart Rename & OCR** | [![Smart Rename](docs/screenshots/05-smart-rename.png)](docs/screenshots/05-smart-rename.png) | Hybrid OCR (Windows Native + PaddleOCR) with AI naming suggestions |
+| **Review Changes** | [![Review Changes](docs/screenshots/06-review-changes.png)](docs/screenshots/06-review-changes.png) | Human-in-the-loop approval, diff preview, collision defense, and rollback |
+| **Real-Time Monitoring** | [![Monitoring](docs/screenshots/07-monitoring.png)](docs/screenshots/07-monitoring.png) | Watchdog filesystem observer, event feeds, and conflict-diverted automation |
+| **Audit & Execution History** | [![History](docs/screenshots/08-history.png)](docs/screenshots/08-history.png) | Immutable audit trails, execution step traces, and one-click transaction undo |
+| **Managed Folders** | [![Managed Folders](docs/screenshots/09-managed-folders.png)](docs/screenshots/09-managed-folders.png) | Strict filesystem boundaries, drive root support, and exclusion management |
+| **Settings & Security** | [![Settings](docs/screenshots/10-settings.png)](docs/screenshots/10-settings.png) | DPAPI credential vault, 9Router/OpenRouter gateway, and system preferences |
+
+> 📖 **Full Visual Catalog & Guide:** For in-depth breakdowns of all screens, modals, component hierarchies, and workflows, see the [Visual UI Previews Catalog](docs/UI_PREVIEWS.md) and [Comprehensive User Guide](docs/USER_GUIDE.md).
 
 </details>
 
@@ -202,7 +204,19 @@ Generated installers are collected into `release/` (and `src-tauri/target/releas
 - `FileNest_0.1.0_x64-setup.exe` (NSIS Installer)
 - `FileNest_0.1.0_x64_en-US.msi` (MSI Enterprise Installer)
 
-For detailed operational, database backup, and deployment procedures, see [docs/WINDOWS_DEPLOYMENT.md](docs/WINDOWS_DEPLOYMENT.md) and [docs/PACKAGING_AND_BUILD.md](docs/PACKAGING_AND_BUILD.md).
+---
+
+## Documentation
+
+Explore the complete FileNest documentation suite in [`docs/`](docs/README.md):
+
+- [**Documentation Hub**](docs/README.md) — Central portal and documentation index.
+- [**Comprehensive User & Feature Guide**](docs/USER_GUIDE.md) — Detailed manual for all 10 modules, interactive workflows, recipes, and UI features.
+- [**Visual UI Previews Catalog**](docs/UI_PREVIEWS.md) — Visual reference of all primary screens, modals, component hierarchies, and theme previews.
+- [**Technical Architecture & Security**](docs/ARCHITECTURE.md) — Tauri 2 IPC, FastAPI REST architecture, SQLite WAL schema, DPAPI vault, and Transaction Manager.
+- [**Filesystem Safety Verification**](docs/FILESYSTEM_SAFETY_VERIFICATION.md) — Safety criteria, path validation matrices, and reparse point protections.
+- [**Packaging & Build Guide**](docs/PACKAGING_AND_BUILD.md) — PyInstaller backend compilation and Tauri NSIS/MSI packaging.
+- [**Windows Deployment & Operations**](docs/WINDOWS_DEPLOYMENT.md) — Windows production operations, service lifecycle, and maintenance.
 
 ---
 
@@ -236,8 +250,15 @@ For detailed operational, database backup, and deployment procedures, see [docs/
 │   │   ├── launcher.py         # Frozen production backend entrypoint
 │   │   └── main.py             # FastAPI application factory & lifespan
 │   └── tests/                  # Pytest unit, integration, and security test suites
-├── design/                     # UI design specifications and reference previews
-├── docs/                       # Deployment, packaging, and filesystem safety docs
+├── docs/                       # Complete project documentation suite
+│   ├── README.md               # Documentation hub and navigation portal
+│   ├── USER_GUIDE.md           # User manual and practical recipes with screenshots
+│   ├── UI_PREVIEWS.md          # Visual interface catalog and modal breakdowns
+│   ├── ARCHITECTURE.md         # Technical architecture and security specification
+│   ├── FILESYSTEM_SAFETY_VERIFICATION.md # Filesystem safety and reparse point defense
+│   ├── PACKAGING_AND_BUILD.md  # PyInstaller and Tauri NSIS/MSI build instructions
+│   ├── WINDOWS_DEPLOYMENT.md   # Deployment, operations, and service management
+│   └── screenshots/            # High-resolution screenshots of all UI modules
 ├── scripts/                    # PyInstaller & Windows installer build/run scripts
 ├── src/                        # React 18 + TypeScript desktop UI
 │   ├── components/             # Layout, navigation, command palette, AI assistant
