@@ -6,7 +6,7 @@ import stat
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
@@ -100,6 +100,8 @@ class StorageAnalyzerService:
         folder_id: str,
         large_file_threshold_bytes: int = 100 * 1024 * 1024,
         calculate_hashes: bool = True,
+        progress_callback: Optional[Callable[[int, str, Optional[int], Optional[int]], None]] = None,
+        cancellation_check: Optional[Callable[[], bool]] = None,
     ) -> StorageAnalysisResult:
         """Performs a deep read-only storage analysis on a single Managed Folder."""
         folder = self._get_active_folder(folder_id)
@@ -126,6 +128,8 @@ class StorageAnalyzerService:
                 large_threshold=large_file_threshold_bytes,
                 calculate_hashes=calculate_hashes,
                 scan_job_id=scan_job.id,
+                progress_callback=progress_callback,
+                cancellation_check=cancellation_check,
             )
 
             # Mark scan job completed
@@ -177,6 +181,8 @@ class StorageAnalyzerService:
         self,
         large_file_threshold_bytes: int = 100 * 1024 * 1024,
         calculate_hashes: bool = True,
+        progress_callback: Optional[Callable[[int, str, Optional[int], Optional[int]], None]] = None,
+        cancellation_check: Optional[Callable[[], bool]] = None,
     ) -> StorageAnalysisResult:
         """Performs storage analysis across all enabled Managed Folders."""
         folders = list(
@@ -193,12 +199,22 @@ class StorageAnalyzerService:
             )
 
         individual_results: List[StorageAnalysisResult] = []
-        for f in folders:
+        total_folders = len(folders)
+        for idx, f in enumerate(folders):
+            if cancellation_check and cancellation_check():
+                raise InterruptedError("Analisis penyimpanan dibatalkan.")
             if Path(f.root_path).exists():
+                def folder_sub_progress(p: int, step: str, proc: Optional[int], tot: Optional[int]) -> None:
+                    if progress_callback:
+                        overall_pct = int((idx / total_folders) * 100 + (p / total_folders))
+                        progress_callback(min(99, overall_pct), f"[{idx + 1}/{total_folders}] {f.name}: {step}", proc, tot)
+
                 res = self.analyze_folder(
                     f.id,
                     large_file_threshold_bytes=large_file_threshold_bytes,
                     calculate_hashes=calculate_hashes,
+                    progress_callback=folder_sub_progress,
+                    cancellation_check=cancellation_check,
                 )
                 individual_results.append(res)
 
@@ -211,6 +227,8 @@ class StorageAnalyzerService:
         large_threshold: int,
         calculate_hashes: bool,
         scan_job_id: str,
+        progress_callback: Optional[Callable[[int, str, Optional[int], Optional[int]], None]] = None,
+        cancellation_check: Optional[Callable[[], bool]] = None,
     ) -> StorageAnalysisResult:
         """Recursive read-only traversal collecting size distributions, large files,
         empty folders, and candidate duplicates."""
@@ -226,6 +244,28 @@ class StorageAnalyzerService:
         total_folders = 0
         skipped_protected_count = 0
         skipped_inaccessible_count = 0
+        skipped_excluded_count = 0
+        skipped_excluded_paths: Set[str] = set()
+
+        # Load user-configured folder & file exclusions (FNE-87, FNE-89)
+        from backend.app.services.managed_folder import ManagedFolderService
+        mf_service = ManagedFolderService(self.db)
+        folder_exclusions = mf_service.get_folder_exclusions(folder.id)
+        excluded_dirs: Set[str] = {
+            ex.value.replace("\\", "/").strip("/").lower()
+            for ex in folder_exclusions
+            if ex.is_enabled and ex.exclusion_type == "directory" and ex.value.strip()
+        }
+        excluded_files: Set[str] = {
+            ex.value.replace("\\", "/").strip("/").lower()
+            for ex in folder_exclusions
+            if ex.is_enabled and ex.exclusion_type == "file" and ex.value.strip()
+        }
+        excluded_exts: Set[str] = {
+            ex.value.lower().lstrip(".")
+            for ex in folder_exclusions
+            if ex.is_enabled and ex.exclusion_type == "extension" and ex.value.strip()
+        }
 
         # Overlap detection (FNE-11): find registered nested folder roots
         nested_roots: Set[Path] = set()
@@ -250,6 +290,8 @@ class StorageAnalyzerService:
         stack: List[Path] = [root_path]
 
         while stack:
+            if cancellation_check and cancellation_check():
+                raise InterruptedError("Analisis penyimpanan dibatalkan.")
             current_dir = stack.pop()
             rel_dir = current_dir.relative_to(root_path).as_posix()
             if rel_dir == ".":
@@ -277,8 +319,19 @@ class StorageAnalyzerService:
 
                         sub_items_count += 1
                         entry_rel = entry_path.relative_to(root_path).as_posix()
+                        entry_rel_lower = entry_rel.lower()
 
                         if entry.is_dir(follow_symlinks=False):
+                            # Check if directory or any parent is excluded (FNE-87, FNE-89)
+                            is_excluded = any(
+                                entry_rel_lower == ex_d or entry_rel_lower.startswith(f"{ex_d}/")
+                                for ex_d in excluded_dirs
+                            )
+                            if is_excluded:
+                                skipped_excluded_count += 1
+                                skipped_excluded_paths.add(entry_rel)
+                                continue
+
                             total_folders += 1
                             stack.append(entry_path)
                             try:
@@ -292,6 +345,19 @@ class StorageAnalyzerService:
                                 "modified_at": mtime,
                             })
                         elif entry.is_file(follow_symlinks=False):
+                            ext = entry_path.suffix.lower().lstrip(".") if entry_path.suffix else None
+
+                            # Check if file, extension, or parent directory is excluded (FNE-87, FNE-89)
+                            is_excluded = (
+                                entry_rel_lower in excluded_files
+                                or any(entry_rel_lower.startswith(f"{ex_d}/") for ex_d in excluded_dirs)
+                                or (bool(ext) and ext in excluded_exts)
+                            )
+                            if is_excluded:
+                                skipped_excluded_count += 1
+                                skipped_excluded_paths.add(entry_rel)
+                                continue
+
                             try:
                                 st = entry_path.stat(follow_symlinks=False)
                                 size = st.st_size
@@ -301,6 +367,14 @@ class StorageAnalyzerService:
 
                                 total_files += 1
                                 total_bytes += size
+
+                                if total_files % 50 == 0 and progress_callback:
+                                    progress_callback(
+                                        min(45, int((total_files / 200) * 45)),
+                                        f"Memindai direktori: {entry.name}",
+                                        total_files,
+                                        None,
+                                    )
 
                                 files_data.append({
                                     "path": entry_path,
@@ -378,9 +452,14 @@ class StorageAnalyzerService:
             if f["size_bytes"] > 0:  # Ignore 0-byte files for duplicate content savings
                 size_buckets[f["size_bytes"]].append(f)
 
+        total_dup_candidates = sum(len(c) for c in size_buckets.values() if len(c) >= 2)
+        processed_candidates = 0
+
         for size, candidates in size_buckets.items():
             if len(candidates) < 2:
                 continue
+            if cancellation_check and cancellation_check():
+                raise InterruptedError("Analisis penyimpanan dibatalkan.")
 
             # Candidate group shares exact size -> pre-filter with 4KB header
             header_buckets: Dict[bytes, List[Dict[str, Any]]] = defaultdict(list)
@@ -398,11 +477,22 @@ class StorageAnalyzerService:
                 # Full SHA-256 hash comparison if requested
                 hash_buckets: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
                 for c in hdr_candidates:
+                    if cancellation_check and cancellation_check():
+                        raise InterruptedError("Analisis penyimpanan dibatalkan.")
                     try:
                         sha = compute_file_sha256(c["path"]) if calculate_hashes else f"size_{size}"
                         hash_buckets[sha].append(c)
                     except Exception:
                         pass
+                    processed_candidates += 1
+                    if progress_callback:
+                        pct = 45 + int((processed_candidates / max(1, total_dup_candidates)) * 45)
+                        progress_callback(
+                            min(90, pct),
+                            f"Memeriksa hash duplikat: {c['name']}",
+                            processed_candidates,
+                            total_dup_candidates,
+                        )
 
                 for sha, dupes in hash_buckets.items():
                     if len(dupes) >= 2:
@@ -592,6 +682,9 @@ class StorageAnalyzerService:
             except Exception:
                 pass
 
+        if progress_callback:
+            progress_callback(95, "Menyusun ringkasan analisis penyimpanan...", total_files, total_files)
+
         return StorageAnalysisResult(
             managed_folder_id=folder.id,
             managed_folder_name=folder.name,
@@ -604,6 +697,8 @@ class StorageAnalyzerService:
             volume_free_bytes=vol_free,
             skipped_protected_count=skipped_protected_count,
             skipped_inaccessible_count=skipped_inaccessible_count,
+            skipped_excluded_count=skipped_excluded_count,
+            skipped_excluded_paths=sorted(list(skipped_excluded_paths)),
             large_files_count=len(large_files),
             large_files_bytes=large_files_bytes,
             large_files_percentage=large_files_pct,
@@ -750,6 +845,11 @@ class StorageAnalyzerService:
             StorageUsageTrendPoint(date=now_date, total_size_bytes=total_storage)
         ]
 
+        total_skipped_excluded = sum(getattr(r, "skipped_excluded_count", 0) or 0 for r in results)
+        all_skipped_excluded_paths = sorted(
+            list(set(p for r in results for p in (getattr(r, "skipped_excluded_paths", []) or [])))
+        )
+
         return StorageAnalysisResult(
             managed_folder_id=None,
             managed_folder_name="All Managed Folders",
@@ -757,6 +857,8 @@ class StorageAnalyzerService:
             total_storage_bytes=total_storage,
             total_files_count=total_files,
             total_folders_count=total_folders,
+            skipped_excluded_count=total_skipped_excluded,
+            skipped_excluded_paths=all_skipped_excluded_paths,
             large_files_count=large_files_count,
             large_files_bytes=large_files_bytes,
             large_files_percentage=large_files_pct,
@@ -846,3 +948,66 @@ class StorageAnalyzerService:
             total_items_queued=total_queued,
             message=f"Queued {total_queued} item(s) across {len(created_plan_ids)} change plan(s) in Review Changes.",
         )
+
+
+def run_storage_analysis_background(
+    job_id: str,
+    folder_id: Optional[str] = None,
+    large_file_threshold_bytes: int = 100 * 1024 * 1024,
+    calculate_hashes: bool = True,
+) -> None:
+    """Asynchronous background runner for deep storage analysis, publishing live metrics
+    and progress to BackgroundJob."""
+    from backend.app.db.models.background_job import BackgroundJob
+    from backend.app.db.session import SessionLocal
+    from backend.app.services.background_job_service import get_background_job_service
+
+    job_service = get_background_job_service()
+    db = SessionLocal()
+    try:
+        job_service.start_job(job_id, db=db)
+        service = StorageAnalyzerService(db=db)
+
+        def on_progress(pct: int, step: str, proc: Optional[int], tot: Optional[int]) -> None:
+            job_service.update_progress(
+                job_id,
+                progress=pct,
+                current_step=step,
+                items_processed=proc,
+                items_total=tot,
+            )
+
+        def is_cancelled() -> bool:
+            return job_service.is_cancelled(job_id)
+
+        if folder_id:
+            result = service.analyze_folder(
+                folder_id=folder_id,
+                large_file_threshold_bytes=large_file_threshold_bytes,
+                calculate_hashes=calculate_hashes,
+                progress_callback=on_progress,
+                cancellation_check=is_cancelled,
+            )
+        else:
+            result = service.analyze_all_folders(
+                large_file_threshold_bytes=large_file_threshold_bytes,
+                calculate_hashes=calculate_hashes,
+                progress_callback=on_progress,
+                cancellation_check=is_cancelled,
+            )
+
+        job_service.complete_job(job_id, result_payload=result.model_dump(), db=db)
+    except InterruptedError as ie:
+        logger.info("Storage analysis job %s was cancelled: %s", job_id, ie)
+        job = db.get(BackgroundJob, job_id)
+        if job and job.status != "cancelled":
+            job.status = "cancelled"
+            job.current_step = "Pekerjaan dibatalkan oleh pengguna."
+            job.finished_at = utc_now_iso()
+            db.commit()
+    except Exception as e:
+        logger.error("Background storage analysis job %s failed: %s", job_id, e, exc_info=True)
+        job_service.fail_job(job_id, error_message=str(e), db=db)
+    finally:
+        db.close()
+

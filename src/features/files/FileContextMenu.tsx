@@ -9,6 +9,8 @@ import {
   Sparkles,
   ClipboardCopy,
   Info,
+  Shield,
+  ShieldOff,
 } from "lucide-react";
 import type { FileItemMetadata } from "@/types";
 
@@ -28,6 +30,8 @@ export interface FileContextMenuProps {
   onCopyPath: (item: FileItemMetadata) => void;
   onAskAI?: (item: FileItemMetadata) => void;
   onShowDetails?: (item: FileItemMetadata) => void;
+  isExcluded?: boolean;
+  onToggleExcludeFolder?: (item: FileItemMetadata) => void;
 }
 
 export const FileContextMenu: React.FC<FileContextMenuProps> = ({
@@ -46,6 +50,8 @@ export const FileContextMenu: React.FC<FileContextMenuProps> = ({
   onCopyPath,
   onAskAI,
   onShowDetails,
+  isExcluded = false,
+  onToggleExcludeFolder,
 }) => {
   const menuRef = useRef<HTMLDivElement>(null);
   const [coords, setCoords] = useState<{ top: number; left: number }>({ top: y, left: x });
@@ -226,6 +232,29 @@ export const FileContextMenu: React.FC<FileContextMenuProps> = ({
           <ClipboardCopy size={14} className="text-muted-foreground" />
           <span>Salin Path Lengkap</span>
         </button>
+
+        {/* Toggle Folder Exclusion (FNE-84, FNE-85) */}
+        {isDirectory && onToggleExcludeFolder && (
+          <button
+            onClick={() => {
+              onClose();
+              onToggleExcludeFolder(item);
+            }}
+            className="w-full flex items-center gap-2.5 px-3 py-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-200 hover:text-zinc-900 dark:hover:text-zinc-50 text-left transition-colors"
+          >
+            {isExcluded ? (
+              <>
+                <ShieldOff size={14} className="text-amber-500" />
+                <span>Batal Kecualikan Folder (Izinkan Scan)</span>
+              </>
+            ) : (
+              <>
+                <Shield size={14} className="text-indigo-500" />
+                <span>Kecualikan Folder (Lindungi dari Scan)</span>
+              </>
+            )}
+          </button>
+        )}
       </div>
 
       <div className="h-px bg-zinc-100 dark:border-zinc-800 dark:bg-zinc-800 my-0.5" />

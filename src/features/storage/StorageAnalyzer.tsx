@@ -14,6 +14,7 @@ import {
   ChevronDown,
 } from "lucide-react";
 import { ApiService } from "@/services/api";
+import { useBackgroundTasks } from "@/contexts/BackgroundTasksContext";
 import { formatDate } from "@/lib/utils";
 import type { ManagedFolder, StorageAnalysisResult } from "@/types";
 import { StorageSummaryCards, type StorageTab } from "./StorageSummaryCards";
@@ -32,6 +33,8 @@ export const StorageAnalyzer: React.FC<StorageAnalyzerProps> = ({
   onNavigateToFiles,
   onNavigateToReviewChanges,
 }) => {
+  const { activeJobs, lastCompletedPayload, clearCompletedPayload, trackJob } = useBackgroundTasks();
+
   const [folders, setFolders] = useState<ManagedFolder[]>([]);
   const [selectedFolderId, setSelectedFolderId] = useState<string>("all");
   const [analysisResult, setAnalysisResult] = useState<StorageAnalysisResult | null>(null);
@@ -39,9 +42,37 @@ export const StorageAnalyzer: React.FC<StorageAnalyzerProps> = ({
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
 
   const [isLoading, setIsLoading] = useState(false);
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isAnalyzeMenuOpen, setIsAnalyzeMenuOpen] = useState(false);
+
+  const activeStorageJob = activeJobs.find(
+    (j) =>
+      j.job_type === "storage_analysis" &&
+      (selectedFolderId === "all" ||
+        !j.managed_folder_id ||
+        j.managed_folder_id === selectedFolderId)
+  );
+
+  // Result hydration when job completes in background
+  useEffect(() => {
+    if (lastCompletedPayload && lastCompletedPayload.jobType === "storage_analysis") {
+      let payload = lastCompletedPayload.resultPayload;
+      if (typeof payload === "string") {
+        try {
+          payload = JSON.parse(payload);
+        } catch {
+          // ignore
+        }
+      }
+      if (payload && payload.total_storage_bytes !== undefined) {
+        setAnalysisResult(payload);
+      }
+      if (lastCompletedPayload.managedFolderId) {
+        setSelectedFolderId(lastCompletedPayload.managedFolderId);
+      }
+      clearCompletedPayload();
+    }
+  }, [lastCompletedPayload, clearCompletedPayload]);
 
   // Load registered folders
   const loadFolders = useCallback(async () => {
@@ -84,27 +115,26 @@ export const StorageAnalyzer: React.FC<StorageAnalyzerProps> = ({
     loadAnalysis(folderId);
   };
 
-  // Run new storage analysis
+  // Run new storage analysis in background
   const handleRunAnalysis = async (targetFolderId?: string) => {
     setIsAnalyzeMenuOpen(false);
-    setIsAnalyzing(true);
     setErrorMessage(null);
     try {
       const folderIdParam = targetFolderId === "all" ? undefined : targetFolderId;
-      const result = await ApiService.triggerStorageAnalysis({
+      const job = await ApiService.triggerStorageAnalysisAsync({
         managed_folder_id: folderIdParam,
         large_file_threshold_bytes: 100 * 1024 * 1024, // 100 MB
         calculate_hashes: true,
       });
-      setAnalysisResult(result);
+      if (job) {
+        trackJob(job);
+      }
       if (targetFolderId !== undefined) {
         setSelectedFolderId(targetFolderId);
       }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Storage analysis execution failed";
+      const msg = err instanceof Error ? err.message : "Gagal memulai analisis penyimpanan";
       setErrorMessage(msg);
-    } finally {
-      setIsAnalyzing(false);
     }
   };
 
@@ -167,7 +197,7 @@ export const StorageAnalyzer: React.FC<StorageAnalyzerProps> = ({
           {/* Refresh Button */}
           <button
             onClick={() => loadAnalysis(selectedFolderId)}
-            disabled={isLoading || isAnalyzing}
+            disabled={isLoading || !!activeStorageJob}
             title="Reload analysis results from database"
             className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-secondary text-secondary-foreground hover:bg-secondary/80 border border-border transition-colors disabled:opacity-50 shadow-xs"
           >
@@ -180,15 +210,15 @@ export const StorageAnalyzer: React.FC<StorageAnalyzerProps> = ({
             <div className="inline-flex rounded-lg shadow-xs overflow-hidden border border-primary">
               <button
                 onClick={() => handleRunAnalysis(selectedFolderId)}
-                disabled={isAnalyzing}
+                disabled={!!activeStorageJob}
                 className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
               >
-                <Play size={13} className={isAnalyzing ? "animate-spin" : "fill-current"} />
-                <span>{isAnalyzing ? "Analyzing..." : "Analyze Now"}</span>
+                <Play size={13} className={activeStorageJob ? "animate-spin" : "fill-current"} />
+                <span>{activeStorageJob ? "Menganalisis..." : "Analyze Now"}</span>
               </button>
               <button
                 onClick={() => setIsAnalyzeMenuOpen(!isAnalyzeMenuOpen)}
-                disabled={isAnalyzing}
+                disabled={!!activeStorageJob}
                 className="px-2 py-1.5 bg-primary/95 text-primary-foreground border-l border-primary-foreground/20 hover:bg-primary/90 transition-colors disabled:opacity-50"
               >
                 <ChevronDown size={14} />
@@ -234,23 +264,31 @@ export const StorageAnalyzer: React.FC<StorageAnalyzerProps> = ({
         </div>
       )}
 
-      {/* Analyzing Banner State */}
-      {isAnalyzing && (
-        <div className="p-4 rounded-xl border border-primary/30 bg-primary/5 flex items-center gap-3 text-xs text-primary animate-pulse">
-          <RefreshCw size={18} className="animate-spin text-primary shrink-0" />
-          <div className="space-y-0.5">
-            <p className="font-semibold text-foreground">
-              Running deep storage scan & progressive hash duplicate detection...
-            </p>
-            <p className="text-muted-foreground">
-              Traversing files safely within registered folder boundaries without filesystem mutations.
-            </p>
+      {/* Active Background Job Progress Banner (Decoupled, non-blocking) */}
+      {activeStorageJob && (
+        <div className="p-3.5 rounded-xl border border-primary/40 bg-primary/5 flex items-center justify-between gap-4 text-xs transition-all">
+          <div className="flex items-center gap-3 min-w-0">
+            <RefreshCw size={17} className="animate-spin text-primary shrink-0" />
+            <div className="min-w-0">
+              <p className="font-semibold text-foreground truncate">
+                {activeStorageJob.title} ({activeStorageJob.progress}%)
+              </p>
+              <p className="text-muted-foreground truncate text-[11px] mt-0.5">
+                {activeStorageJob.current_step}
+              </p>
+            </div>
+          </div>
+          <div className="w-36 hidden sm:block shrink-0 bg-secondary h-2 rounded-full overflow-hidden">
+            <div
+              className="bg-primary h-full transition-all duration-300"
+              style={{ width: `${Math.max(5, activeStorageJob.progress)}%` }}
+            />
           </div>
         </div>
       )}
 
       {/* Empty State when no analysis has run */}
-      {!isLoading && !isAnalyzing && !analysisResult && (
+      {!isLoading && !activeStorageJob && !analysisResult && (
         <div className="p-12 text-center border border-dashed border-border rounded-2xl bg-card/50 space-y-4">
           <div className="w-12 h-12 rounded-full bg-primary/10 text-primary flex items-center justify-center mx-auto">
             <HardDrive size={24} />

@@ -801,6 +801,39 @@ class ManagedFolderService:
         )
         return True
 
+    def toggle_folder_exclusion(
+        self,
+        folder_id: str,
+        relative_path: str,
+        exclusion_type: str = "directory",
+        reason: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Toggles an exclusion rule: removes it if it already exists, adds it if not."""
+        items = self.get_folder_exclusions(folder_id)
+        norm_path = relative_path.replace("\\", "/").strip("/").lower()
+        existing = next(
+            (
+                i for i in items
+                if i.exclusion_type == exclusion_type
+                and i.value.replace("\\", "/").strip("/").lower() == norm_path
+            ),
+            None,
+        )
+
+        if existing:
+            self.delete_folder_exclusion(folder_id, existing.id)
+            return {"action": "removed", "exclusion_id": existing.id, "relative_path": relative_path}
+        else:
+            new_item = self.add_folder_exclusion(
+                folder_id,
+                FolderExclusionCreate(
+                    exclusion_type=exclusion_type,
+                    value=relative_path.replace("\\", "/").strip("/"),
+                    reason=reason or "Toggled from Files Manager",
+                ),
+            )
+            return {"action": "added", "item": new_item.model_dump(), "relative_path": relative_path}
+
     # ==========================================
     # Folder Health & Usage Diagnostics
     # ==========================================

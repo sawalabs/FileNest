@@ -18,6 +18,7 @@ from backend.app.api.v1.endpoints import (
     rules,
     assistant,
     ocr,
+    jobs,
 )
 
 api_v1_router = APIRouter()
@@ -39,4 +40,5 @@ api_v1_router.include_router(smart_rename.router, prefix="/smart-rename", tags=[
 api_v1_router.include_router(history.router, prefix="/history", tags=["History & Audit Logs"])
 api_v1_router.include_router(monitoring.router, prefix="/monitoring", tags=["Filesystem Monitoring"])
 api_v1_router.include_router(settings.router, prefix="/settings", tags=["Application Settings"])
+api_v1_router.include_router(jobs.router, prefix="/jobs", tags=["Background Tasks & Jobs"])
 

@@ -18,6 +18,7 @@ import {
   PieChart as PieChartIcon,
   ChevronRight,
   FolderTree,
+  Shield,
 } from "lucide-react";
 import { formatBytes, formatNumber } from "@/lib/utils";
 import type { StorageAnalysisResult } from "@/types";
@@ -73,6 +74,45 @@ export const StorageOverviewTab: React.FC<StorageOverviewTabProps> = ({
 
   return (
     <div className="space-y-6">
+      {/* Excluded Folders Metric Notice (FNE-89) */}
+      {(data.skipped_excluded_count || 0) > 0 && (
+        <div className="p-4 rounded-xl border border-amber-500/20 bg-amber-500/5 text-xs text-foreground flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
+          <div className="flex items-start sm:items-center gap-3">
+            <div className="p-2 rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-400 shrink-0">
+              <Shield size={18} />
+            </div>
+            <div>
+              <div className="font-semibold text-sm text-foreground flex items-center gap-2">
+                <span>{data.skipped_excluded_count} Folder/Berkas Dikecualikan dari Analisis</span>
+                <span className="px-1.5 py-0.2 rounded text-[10px] font-semibold bg-amber-500/15 text-amber-700 dark:text-amber-400">
+                  Omitted
+                </span>
+              </div>
+              <p className="text-muted-foreground mt-0.5">
+                Folder ini dilindungi sesuai pengaturan Managed Folders dan diabaikan dari perhitungan total ukuran & duplikasi.
+              </p>
+              {data.skipped_excluded_paths && data.skipped_excluded_paths.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-1.5 max-h-20 overflow-y-auto">
+                  {data.skipped_excluded_paths.slice(0, 8).map((p) => (
+                    <span
+                      key={p}
+                      className="px-2 py-0.5 rounded bg-background/80 border border-border/60 text-[11px] font-mono text-muted-foreground"
+                    >
+                      {p}
+                    </span>
+                  ))}
+                  {data.skipped_excluded_paths.length > 8 && (
+                    <span className="text-[11px] text-muted-foreground self-center">
+                      +{data.skipped_excluded_paths.length - 8} lainnya
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Top Grid: Storage Distribution (Donut) & Largest Folders */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* Storage Distribution by File Type */}

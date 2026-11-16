@@ -85,6 +85,8 @@ class StorageAnalysisResult(BaseModel):
     volume_free_bytes: Optional[int] = None
     skipped_protected_count: int = 0
     skipped_inaccessible_count: int = 0
+    skipped_excluded_count: int = 0
+    skipped_excluded_paths: List[str] = Field(default_factory=list)
     large_files_count: int = 0
     large_files_bytes: int = 0
     large_files_percentage: float = 0.0

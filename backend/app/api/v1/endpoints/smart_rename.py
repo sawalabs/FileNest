@@ -1,6 +1,10 @@
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from sqlalchemy.orm import Session
 
-from backend.app.api.deps import get_smart_rename_service
+from backend.app.api.deps import get_background_job_service, get_db, get_smart_rename_service
+from backend.app.db.models.change_plan import ChangePlan
+from backend.app.db.models.managed_folder import ManagedFolder
+from backend.app.schemas.background_job import BackgroundJobResponse, BackgroundJobType
 from backend.app.schemas.smart_rename import (
     BatchOCRJobStatus,
     ItemOCRAnalyzeRequest,
@@ -10,7 +14,8 @@ from backend.app.schemas.smart_rename import (
     SmartRenamePlanRequest,
     SmartRenamePlanResult,
 )
-from backend.app.services.smart_rename import SmartRenameService
+from backend.app.services.background_job_service import BackgroundJobService
+from backend.app.services.smart_rename import SmartRenameService, run_smart_rename_plan_background
 
 router = APIRouter()
 
@@ -37,6 +42,39 @@ async def generate_smart_rename_plan(
         )
 
 
+@router.post(
+    "/plan-async",
+    response_model=BackgroundJobResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def generate_smart_rename_plan_async(
+    payload: SmartRenamePlanRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    job_service: BackgroundJobService = Depends(get_background_job_service),
+) -> BackgroundJobResponse:
+    """Initiates non-blocking background Smart Rename Plan generation with progress reporting."""
+    folder = db.get(ManagedFolder, payload.managed_folder_id)
+    folder_name = folder.name if folder else payload.managed_folder_id
+
+    job = job_service.create_job(
+        job_type=BackgroundJobType.SMART_RENAME,
+        title=f"Smart Rename: {folder_name}",
+        managed_folder_id=payload.managed_folder_id,
+        managed_folder_name=folder_name,
+        current_step="Memulai analisis penamaan cerdas di latar belakang...",
+        db=db,
+    )
+
+    background_tasks.add_task(
+        run_smart_rename_plan_background,
+        job_id=job.id,
+        payload_data=payload.model_dump(),
+    )
+
+    return BackgroundJobResponse.model_validate(job)
+
+
 @router.post("/items/{item_id}/analyze-ocr", response_model=ItemOCRAnalyzeResponse)
 async def analyze_smart_rename_item_ocr(
     item_id: str,
@@ -59,11 +97,26 @@ async def analyze_smart_rename_item_ocr(
 async def trigger_batch_ocr_background(
     plan_id: str,
     background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
     service: SmartRenameService = Depends(get_smart_rename_service),
+    job_service: BackgroundJobService = Depends(get_background_job_service),
 ) -> BatchOCRJobStatus:
     """Initiates non-blocking background OCR processing on all eligible items in the plan."""
-    background_tasks.add_task(service.run_batch_ocr_background, plan_id)
+    plan = db.get(ChangePlan, plan_id)
+    plan_title = plan.title if plan and plan.title else f"Plan {plan_id[:8]}"
+    folder_id = plan.managed_folder_id if plan else None
+
+    job = job_service.create_job(
+        job_type=BackgroundJobType.BATCH_OCR,
+        title=f"Batch OCR: {plan_title}",
+        managed_folder_id=folder_id,
+        current_step="Menyiapkan antrean pemrosesan OCR...",
+        db=db,
+    )
+
+    background_tasks.add_task(service.run_batch_ocr_background, plan_id, job.id)
     return service.get_batch_ocr_status(plan_id)
+
 
 
 @router.get("/plans/{plan_id}/batch-ocr/status", response_model=BatchOCRJobStatus)

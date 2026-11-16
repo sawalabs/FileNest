@@ -51,6 +51,11 @@ export const StorageSummaryCards: React.FC<StorageSummaryCardsProps> = ({
           </h3>
           <p className="text-xs text-muted-foreground">
             {formatNumber(totalFiles)} files indexed
+            {Boolean(data?.skipped_excluded_count) && (
+              <span className="block text-[10px] text-amber-600 dark:text-amber-400 mt-0.5 font-medium">
+                ({data?.skipped_excluded_count} item dikecualikan)
+              </span>
+            )}
           </p>
         </div>
       </div>

@@ -5,6 +5,7 @@ import {
   FileText,
   History,
   ShieldCheck,
+  Shield,
   CheckCircle2,
   AlertCircle,
   ArrowRight,
@@ -18,6 +19,7 @@ import {
   X,
 } from "lucide-react";
 import { ApiService } from "@/services/api";
+import { useBackgroundTasks } from "@/contexts/BackgroundTasksContext";
 import { formatDate, cn } from "@/lib/utils";
 import type {
   ManagedFolder,
@@ -42,6 +44,8 @@ interface SmartRenameManagerProps {
 export const SmartRenameManager: React.FC<SmartRenameManagerProps> = ({
   onNavigateToReviewChanges,
 }) => {
+  const { activeJobs, lastCompletedPayload, clearCompletedPayload, trackJob } = useBackgroundTasks();
+
   const [folders, setFolders] = useState<ManagedFolder[]>([]);
   const [selectedFolderId, setSelectedFolderId] = useState<string>("");
   const [activeTab, setActiveTab] = useState<RenameTab>("create");
@@ -55,6 +59,40 @@ export const SmartRenameManager: React.FC<SmartRenameManagerProps> = ({
   const [isHistoryLoading, setIsHistoryLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+
+  const activeRenameJob = activeJobs.find(
+    (j) =>
+      (j.job_type === "smart_rename_plan" || j.job_type === "batch_ocr") &&
+      (!selectedFolderId ||
+        j.managed_folder_id === selectedFolderId ||
+        !j.managed_folder_id)
+  );
+
+  // Result hydration when job completes in background
+  useEffect(() => {
+    if (
+      lastCompletedPayload &&
+      (lastCompletedPayload.jobType === "smart_rename_plan" ||
+        lastCompletedPayload.jobType === "batch_ocr")
+    ) {
+      let payload = lastCompletedPayload.resultPayload;
+      if (typeof payload === "string") {
+        try {
+          payload = JSON.parse(payload);
+        } catch {
+          // ignore
+        }
+      }
+      if (payload && payload.change_plan_id) {
+        setPlanResult(payload);
+        if (lastCompletedPayload.managedFolderId) {
+          setSelectedFolderId(lastCompletedPayload.managedFolderId);
+        }
+        setSuccessMessage("Rencana penamaan cerdas selesai diproses di latar belakang.");
+        clearCompletedPayload();
+      }
+    }
+  }, [lastCompletedPayload, clearCompletedPayload]);
 
   const [expandedPlanId, setExpandedPlanId] = useState<string | null>(null);
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
@@ -102,9 +140,11 @@ export const SmartRenameManager: React.FC<SmartRenameManagerProps> = ({
     setErrorMessage(null);
     setSuccessMessage(null);
     try {
-      const res = await ApiService.createSmartRenamePlan(req);
-      setPlanResult(res);
-      setSuccessMessage("Smart Rename plan generated as draft with conflict checks.");
+      const job = await ApiService.generateSmartRenamePlanAsync(req);
+      if (job) {
+        trackJob(job);
+      }
+      setSuccessMessage("Analisis penamaan cerdas sedang diproses di latar belakang...");
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Failed to generate rename plan";
       setErrorMessage(msg);
@@ -439,6 +479,29 @@ export const SmartRenameManager: React.FC<SmartRenameManagerProps> = ({
           </div>
         )}
 
+        {/* Active Background Job Progress Banner (Decoupled, non-blocking) */}
+        {activeRenameJob && (
+          <div className="p-3.5 rounded-xl border border-blue-500/40 bg-blue-500/5 flex items-center justify-between gap-4 text-xs">
+            <div className="flex items-center gap-3 min-w-0">
+              <RefreshCw size={17} className="animate-spin text-blue-500 shrink-0" />
+              <div className="min-w-0">
+                <p className="font-semibold text-foreground truncate">
+                  {activeRenameJob.title} ({activeRenameJob.progress}%)
+                </p>
+                <p className="text-muted-foreground truncate text-[11px] mt-0.5">
+                  {activeRenameJob.current_step}
+                </p>
+              </div>
+            </div>
+            <div className="w-36 hidden sm:block shrink-0 bg-secondary h-2 rounded-full overflow-hidden">
+              <div
+                className="bg-blue-500 h-full transition-all duration-300"
+                style={{ width: `${Math.max(5, activeRenameJob.progress)}%` }}
+              />
+            </div>
+          </div>
+        )}
+
         {/* Tab: Create Plan */}
         {activeTab === "create" && (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
@@ -470,14 +533,33 @@ export const SmartRenameManager: React.FC<SmartRenameManagerProps> = ({
               </div>
             ) : (
               <>
-                {planResult.protected_folders_skipped && planResult.protected_folders_skipped.length > 0 && (
-                  <div className="p-3 rounded-xl bg-primary/5 border border-primary/20 text-xs text-foreground flex items-center justify-between gap-2">
-                    <span>
-                      <strong>{planResult.protected_folders_skipped.length} protected folder</strong> dilewati agar isinya tetap utuh:{" "}
-                      <span className="font-mono text-primary">
-                        {planResult.protected_folders_skipped.join(", ")}
+                {((planResult.protected_folders_skipped_count || 0) > 0 ||
+                  (planResult.protected_folders_skipped && planResult.protected_folders_skipped.length > 0)) && (
+                  <div className="p-3.5 rounded-xl bg-amber-500/5 border border-amber-500/20 text-xs text-foreground flex flex-col gap-2 shadow-2xs">
+                    <div className="flex items-center gap-2">
+                      <div className="p-1 rounded-md bg-amber-500/10 text-amber-600 dark:text-amber-400 shrink-0">
+                        <Shield size={14} />
+                      </div>
+                      <span className="font-semibold text-foreground">
+                        {planResult.protected_folders_skipped_count || planResult.protected_folders_skipped?.length || 0} Folder Dikecualikan & Dilindungi
                       </span>
-                    </span>
+                      <span className="text-muted-foreground">
+                        (dilewati otomatis dari rencana penggantian nama agar struktur aman)
+                      </span>
+                    </div>
+                    {planResult.protected_folders_skipped && planResult.protected_folders_skipped.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5 pl-6 max-h-24 overflow-y-auto">
+                        {planResult.protected_folders_skipped.map((p) => (
+                          <span
+                            key={p}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded font-mono text-[11px] bg-background/80 border border-border/60 text-muted-foreground"
+                          >
+                            <Shield size={10} className="text-amber-500 shrink-0" />
+                            <span>{p}</span>
+                          </span>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
                 <SmartRenameSummaryCards data={planResult} />

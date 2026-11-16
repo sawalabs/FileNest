@@ -13,6 +13,12 @@ import { MonitoringManager } from "@/features/monitoring/MonitoringManager";
 import { SettingsManager } from "@/features/settings/SettingsManager";
 import { ContextualAssistantPanel } from "@/components/assistant/ContextualAssistantPanel";
 import { CommandPalette } from "@/components/layout/CommandPalette";
+import { BackgroundTasksProvider } from "@/contexts/BackgroundTasksContext";
+import {
+  FloatingBottomProgressBar,
+  BackgroundTasksDrawer,
+  FloatingCompletionToast,
+} from "@/components/tasks";
 import type { NavItem, BackendHealth } from "@/types";
 
 export function App() {
@@ -69,7 +75,7 @@ export function App() {
   }, []);
 
   return (
-    <>
+    <BackgroundTasksProvider onNavigate={setActiveItem}>
       <AppLayout
         activeItem={activeItem}
         onNavigate={setActiveItem}
@@ -117,6 +123,11 @@ export function App() {
         )}
       </AppLayout>
 
+      {/* Floating Background Tasks UI (Android Studio Gradle Style) */}
+      <FloatingBottomProgressBar />
+      <BackgroundTasksDrawer />
+      <FloatingCompletionToast />
+
       <ContextualAssistantPanel
         isOpen={isAssistantOpen}
         onClose={() => setIsAssistantOpen(false)}
@@ -136,7 +147,7 @@ export function App() {
         }}
         onToggleAssistant={() => setIsAssistantOpen((prev) => !prev)}
       />
-    </>
+    </BackgroundTasksProvider>
   );
 }
 
