@@ -11,9 +11,10 @@
 
 **FileNest** is a production-ready Windows desktop application for analyzing, organizing, monitoring, and safely managing local storage and files with AI-assisted planning. Built on **Tauri 2 (Rust)**, **React 18 + TypeScript**, and a local **FastAPI (Python)** backend, FileNest combines deterministic filesystem safety, transactional change plans with rollback, hybrid OCR, and privacy-first AI gateway integration.
 
-> **100% Built with AI:** This entire project—including architecture, desktop shell, frontend UI, FastAPI backend, security hardening, tests, and documentation—was built 100% using AI.
 
 > **Safety First:** AI models only analyze metadata and generate structured change plans. The frontend has zero direct filesystem access—every mutation is validated, approved, executed, and audited by the backend **Transaction Manager** strictly inside user-registered **Managed Folders**.
+
+> **100% Built with AI:** This project built 100% using AI.
 
 ---
 
