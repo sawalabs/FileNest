@@ -93,8 +93,8 @@ cargo tauri build
 ### Generated Artifacts
 Tauri packages the application into the following outputs in `src-tauri/target/release/bundle/`:
 1. **Standalone Portable Executable**: `src-tauri/target/release/filenest.exe`
-2. **NSIS Windows Installer**: `src-tauri/target/release/bundle/nsis/FileNest_0.1.0_x64-setup.exe`
-3. **MSI Enterprise Package**: `src-tauri/target/release/bundle/msi/FileNest_0.1.0_x64_en-US.msi`
+2. **NSIS Windows Installer**: `src-tauri/target/release/bundle/nsis/FileNest_0.2.0_x64-setup.exe`
+3. **MSI Enterprise Package**: `src-tauri/target/release/bundle/msi/FileNest_0.2.0_x64_en-US.msi`
 
 ---
 

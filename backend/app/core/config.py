@@ -21,7 +21,7 @@ def get_default_db_url() -> str:
 
 class Settings(BaseSettings):
     PROJECT_NAME: str = "Desktop & Storage Manager"
-    VERSION: str = "0.1.0"
+    VERSION: str = "0.2.0"
     API_V1_PREFIX: str = "/api/v1"
     
     # Database configuration

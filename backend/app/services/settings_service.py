@@ -202,8 +202,8 @@ class SettingsService:
     def get_about_settings(self) -> AboutSettings:
         return AboutSettings(
             app_name="FileNest Desktop & Storage Manager",
-            version="0.1.0",
-            build_number="20261114-production",
+            version="0.2.0",
+            build_number="20261117-production",
             release_channel="Production Release",
             tauri_version="2.0.0",
             react_version="18.3.1",

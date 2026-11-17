@@ -9,7 +9,7 @@ async def test_health_check_returns_ok(async_client: AsyncClient):
     data = response.json()
     assert data["status"] == "ok"
     assert data["project"] == "Desktop & Storage Manager"
-    assert data["version"] == "0.1.0"
+    assert data["version"] == "0.2.0"
     assert "timestamp" in data
     assert "subsystems" in data
     subsystems = data["subsystems"]

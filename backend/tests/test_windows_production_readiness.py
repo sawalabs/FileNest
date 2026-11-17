@@ -231,7 +231,7 @@ async def test_auto_schema_migration_and_update_installer_endpoints(async_client
     # 3. Verify GET /api/v1/settings/update/status lists discovered installer artifacts
     fake_release_dir = tmp_path / "release"
     fake_release_dir.mkdir(parents=True, exist_ok=True)
-    fake_installer = fake_release_dir / "FileNest_0.1.0_x64-setup.exe"
+    fake_installer = fake_release_dir / "FileNest_0.2.0_x64-setup.exe"
     fake_installer.write_bytes(b"MZ-fake-nsis-installer")
 
     with patch(
@@ -242,10 +242,10 @@ async def test_auto_schema_migration_and_update_installer_endpoints(async_client
     assert status_resp.status_code == 200
     status_data = status_resp.json()
     assert status_data["current_version"] == settings.VERSION
-    assert status_data["latest_version"] == "0.1.0"
+    assert status_data["latest_version"] == "0.2.0"
     assert len(status_data["installers"]) == 1
     assert status_data["installers"][0]["installer_type"] == "nsis"
-    assert status_data["installers"][0]["filename"] == "FileNest_0.1.0_x64-setup.exe"
+    assert status_data["installers"][0]["filename"] == "FileNest_0.2.0_x64-setup.exe"
 
     # 4. Verify POST /api/v1/settings/update/apply validates extension & triggers dry-run launch
     bad_file = tmp_path / "not_an_installer.txt"

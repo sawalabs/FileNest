@@ -46,8 +46,8 @@ pnpm run desktop:build
 ```
 Produces:
 - `src-tauri/target/release/filenest.exe` (Standalone executable)
-- `src-tauri/target/release/bundle/nsis/FileNest_0.1.0_x64-setup.exe` (Self-contained NSIS Installer)
-- `src-tauri/target/release/bundle/msi/FileNest_0.1.0_x64_en-US.msi` (MSI enterprise installer)
+- `src-tauri/target/release/bundle/nsis/FileNest_0.2.0_x64-setup.exe` (Self-contained NSIS Installer)
+- `src-tauri/target/release/bundle/msi/FileNest_0.2.0_x64_en-US.msi` (MSI enterprise installer)
 
 ### 3.3 Backend Virtual Environment Assembly
 For distribution alongside the desktop binary:
@@ -67,7 +67,7 @@ FileNest enforces zero credential exposure in source code, configuration files, 
 Production settings reside in `.env` located in the application root directory:
 ```env
 PROJECT_NAME="Desktop & Storage Manager"
-VERSION="0.1.0"
+VERSION="0.2.0"
 ENVIRONMENT="production"
 DEBUG=false
 LOG_LEVEL="INFO"

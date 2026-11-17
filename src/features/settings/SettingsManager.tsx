@@ -2093,7 +2093,7 @@ export const SettingsManager: React.FC = () => {
                       type="text"
                       value={customInstallerPath}
                       onChange={(e) => setCustomInstallerPath(e.target.value)}
-                      placeholder="C:\...\FileNest_0.1.0_x64-setup.exe"
+                      placeholder="C:\...\FileNest_0.2.0_x64-setup.exe"
                       className="flex-1 text-xs px-3 py-1.5 rounded-md border border-border bg-background text-foreground focus:outline-none focus:ring-1 focus:ring-primary font-mono"
                     />
                     <button

@@ -267,8 +267,8 @@ class StorageSettings(BaseModel):
 # ==========================================
 class AboutSettings(BaseModel):
     app_name: str = "FileNest Desktop & Storage Manager"
-    version: str = "0.1.0"
-    build_number: str = "20261114-production"
+    version: str = "0.2.0"
+    build_number: str = "20261117-production"
     release_channel: str = "Production Release"
     tauri_version: str = "2.0.0"
     react_version: str = "18.3.1"

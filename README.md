@@ -201,8 +201,8 @@ FileNest ships with a single-command standalone Windows installer pipeline using
   ```
 
 Generated installers are collected into `release/` (and `src-tauri/target/release/bundle/`):
-- `FileNest_0.1.0_x64-setup.exe` (NSIS Installer)
-- `FileNest_0.1.0_x64_en-US.msi` (MSI Enterprise Installer)
+- `FileNest_0.2.0_x64-setup.exe` (NSIS Installer)
+- `FileNest_0.2.0_x64_en-US.msi` (MSI Enterprise Installer)
 
 ---
 
